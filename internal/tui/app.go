@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -104,6 +105,7 @@ type model struct {
 	jumpTarget      *JumpTarget
 	globalMode      bool
 	inGitRepo       bool
+	selectAfterLoad string
 }
 
 type JumpTarget struct {
@@ -356,7 +358,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.recentStore != nil {
 			m.recentEntries = m.recentStore.GetOtherProjects(m.svc.Git.RepoRoot, 5)
 		}
-		m.list.SetItems(buildItems(m.states, m.orphans, m.recentEntries, m.svc.Git.RepoRoot))
+		items := buildItems(m.states, m.orphans, m.recentEntries, m.svc.Git.RepoRoot)
+		m.list.SetItems(items)
+		if m.selectAfterLoad != "" {
+			for i, item := range items {
+				if li, ok := item.(listItem); ok && li.kind == kindWorktree && li.title == m.selectAfterLoad {
+					m.list.Select(i)
+					break
+				}
+			}
+			m.selectAfterLoad = ""
+		}
 		m.updatePreview()
 		return m, nil
 
@@ -374,7 +386,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items = append(items, listItem{title: b, desc: "base branch", kind: kindWorktree})
 		}
 		m.menu.SetItems(items)
-		m.menu.Select(0)
+		selectedIdx := 0
+		var currentBranch string
+		for _, st := range m.states {
+			if st.Worktree.Path == m.svc.Git.RepoRoot {
+				currentBranch = st.Worktree.Branch
+				break
+			}
+		}
+		if currentBranch != "" {
+			for i, b := range msg.branches {
+				if b == currentBranch {
+					selectedIdx = i
+					break
+				}
+			}
+		}
+		m.menu.Select(selectedIdx)
 		m.state = m.nextBranchState
 		return m, nil
 
@@ -430,8 +458,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if sel, ok := m.menu.SelectedItem().(listItem); ok {
 					branch := sel.title
 					name := m.pending
+					m.selectAfterLoad = filepath.Base(m.svc.WorktreePath(name))
 					m.state = stateMain
-					return m, tea.Batch(createWorktreeCmd(m.svc, name, branch), loadDataCmd(m.svc))
+					return m, createWorktreeCmd(m.svc, name, branch)
 				}
 			case "esc":
 				m.state = stateMain
@@ -448,8 +477,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if sel, ok := m.menu.SelectedItem().(listItem); ok {
 					branch := sel.title
 					name := m.pending
+					m.selectAfterLoad = filepath.Base(m.svc.WorktreePath(name))
 					m.state = stateMain
-					return m, tea.Batch(adoptCmd(m.svc, name, branch), loadDataCmd(m.svc))
+					return m, adoptCmd(m.svc, name, branch)
 				}
 			case "esc":
 				m.state = stateMain
