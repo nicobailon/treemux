@@ -464,29 +464,96 @@ treemux_main() {
     
     local proc_warning=""
     if [[ -n "$procs" ]]; then
-      proc_warning=$'\n  \033[33m Will terminate: '$procs$'\033[0m'
+      proc_warning=$'\n  \033[90mRunning: '$procs$'\033[0m'
     fi
     
-    local confirm=$(printf "%s\n" \
-      $'\e[31m  Yes, kill session\e[0m|yes' \
-      $'\e[90m  No, cancel\e[0m|no' \
-      | fzf --ansi --with-nth=1 --delimiter='|' \
-        --height=30% --layout=reverse --border=rounded \
+    local action=$(printf "%s\n" \
+      "adopt|  \033[32m Adopt\033[0m \033[90m(create worktree)\033[0m" \
+      "kill|  \033[31m Kill session\033[0m" \
+      "back|  \033[90m Back\033[0m" \
+      | fzf --ansi --with-nth=2.. --delimiter='|' \
+        --height=35% --layout=reverse --border=rounded \
         --margin=1,2 --padding=1 \
         --prompt="  " --pointer="" \
-        --header=$'\n  \033[1;31m Kill orphaned session?\033[0m\n  \033[36m'$orphan_name$'\033[90m (no matching worktree)\033[0m'"$proc_warning"$'\n' \
+        --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;35mOrphaned Session\033[0m\n\n  \033[36m'$orphan_name$'\033[0m\n  \033[90mNo matching worktree\033[0m'"$proc_warning"$'\n' \
         --header-first \
-        --color='bg+:#45303a,bg:#1e1e2e,spinner:#f38ba8,hl:#f38ba8' \
-        --color='fg:#cdd6f4,header:#f38ba8,info:#f38ba8,pointer:#f38ba8' \
-        --color='marker:#f38ba8,fg+:#cdd6f4,prompt:#f38ba8,hl+:#f38ba8' \
-        --color='border:#f38ba8' \
-      | cut -d'|' -f2)
+        --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
+        --color='fg:#cdd6f4,header:#cba6f7,info:#cba6f7,pointer:#f5e0dc' \
+        --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8' \
+        --color='border:#6c7086' \
+      | cut -d'|' -f1)
     
-    if [[ "$confirm" == "yes" ]]; then
-      echo ""
-      tmux kill-session -t "$orphan_name" 2>/dev/null && echo -e "  \033[31m\033[0m  Killed orphaned session \033[36m$orphan_name\033[0m"
-      echo ""
-    fi
+    case "$action" in
+      adopt)
+        local default_branch=$(treemux_default_branch)
+        local branches=$(git branch --format='%(refname:short)' | grep -v '^\*')
+        local sorted_branches=$(echo "$default_branch"; echo "$branches" | grep -v "^${default_branch}$")
+        
+        local base_branch=$(echo "$sorted_branches" | fzf \
+          --ansi \
+          --height=50% \
+          --layout=reverse \
+          --border=rounded \
+          --margin=1,2 \
+          --padding=1 \
+          --prompt="   " \
+          --pointer="" \
+          --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;35mBase Branch\033[0m\n\n  \033[90mCreate worktree\033[0m \033[36m'$orphan_name$'\033[0m \033[90mfrom:\033[0m\n' \
+          --header-first \
+          --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
+          --color='fg:#cdd6f4,header:#cba6f7,info:#cba6f7,pointer:#f5e0dc' \
+          --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8' \
+          --color='border:#6c7086' \
+        )
+        
+        [[ -z "$base_branch" ]] && _treemux_return 0
+        
+        local new_path=$(treemux_get_worktree_path "$orphan_name")
+        echo ""
+        if git worktree add "$new_path" -b "$orphan_name" "$base_branch" 2>/dev/null; then
+          echo -e "  \033[32m\033[0m  Created worktree \033[36m$orphan_name\033[0m from \033[33m$base_branch\033[0m"
+          # Update session working directory to the new worktree
+          tmux send-keys -t "$orphan_name" "cd '$new_path'" Enter
+          echo -e "  \033[32m\033[0m  Linked session to worktree"
+          echo ""
+          # Jump to the session
+          tmux switch-client -t "$orphan_name"
+        else
+          echo -e "  \033[31m\033[0m  Failed to create worktree '$orphan_name'"
+          echo ""
+        fi
+        _treemux_return 0
+        ;;
+      kill)
+        local kill_warning=""
+        if [[ -n "$procs" ]]; then
+          kill_warning=$'\n  \033[33m Will terminate: '$procs$'\033[0m'
+        fi
+        
+        local confirm=$(printf "%s\n" \
+          "yes|  \033[31m Yes, kill session\033[0m" \
+          "no|  \033[90m Cancel\033[0m" \
+          | fzf --ansi --with-nth=2.. --delimiter='|' \
+            --height=30% --layout=reverse --border=rounded \
+            --margin=1,2 --padding=1 \
+            --prompt="  " --pointer="" \
+            --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;31mKill Session?\033[0m\n\n  \033[36m'$orphan_name$'\033[0m'"$kill_warning"$'\n' \
+            --header-first \
+            --color='bg+:#45303a,bg:#1e1e2e,spinner:#f38ba8,hl:#f38ba8' \
+            --color='fg:#cdd6f4,header:#f38ba8,info:#f38ba8,pointer:#f38ba8' \
+            --color='marker:#f38ba8,fg+:#cdd6f4,prompt:#f38ba8,hl+:#f38ba8' \
+            --color='border:#f38ba8' \
+          | cut -d'|' -f1)
+        
+        if [[ "$confirm" == "yes" ]]; then
+          echo ""
+          tmux kill-session -t "$orphan_name" 2>/dev/null && echo -e "  \033[31m\033[0m  Killed session \033[36m$orphan_name\033[0m"
+          echo ""
+        fi
+        ;;
+      back) _treemux_return 0 ;;
+      *) ;;
+    esac
     _treemux_return 0
   fi
   
@@ -508,12 +575,12 @@ treemux_main() {
       --border=rounded \
       --margin=1,2 \
       --padding=1 \
-      --prompt="  " \
+      --prompt="   " \
       --pointer="" \
-      --header=$'\n  \033[1;35m Base Branch\033[0m\n  \033[90mSelect branch to create \033[36m'$new_name$'\033[90m from\033[0m\n' \
+      --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;35mBase Branch\033[0m\n\n  \033[90mCreate worktree\033[0m \033[36m'$new_name$'\033[0m \033[90mfrom:\033[0m\n' \
       --header-first \
       --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
-      --color='fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc' \
+      --color='fg:#cdd6f4,header:#cba6f7,info:#cba6f7,pointer:#f5e0dc' \
       --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8' \
       --color='border:#6c7086' \
     )
@@ -539,20 +606,20 @@ treemux_main() {
     local name=${wt_path:t}
     
     local action=$(printf "%s\n" \
-      $'\e[32m  Jump\e[0m|jump' \
-      $'\e[31m  Delete\e[0m|delete' \
-      $'\e[90m  Cancel\e[0m|cancel' \
-      | fzf --ansi --with-nth=1 --delimiter='|' \
+      "jump|  \033[32m Jump\033[0m" \
+      "delete|  \033[31m Delete\033[0m" \
+      "back|  \033[90m Back\033[0m" \
+      | fzf --ansi --with-nth=2.. --delimiter='|' \
         --height=30% --layout=reverse --border=rounded \
         --margin=1,2 --padding=1 \
         --prompt="  " --pointer="" \
-        --header=$'\n  \033[1;35m'$name$'\033[0m\n' \
+        --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;35m'$name$'\033[0m\n' \
         --header-first \
         --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
         --color='fg:#cdd6f4,header:#cba6f7,info:#cba6f7,pointer:#f5e0dc' \
         --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8' \
         --color='border:#6c7086' \
-      | cut -d'|' -f2)
+      | cut -d'|' -f1)
     
     case "$action" in
       jump) ;;
@@ -574,19 +641,19 @@ treemux_main() {
         fi
         
         local confirm=$(printf "%s\n" \
-          $'\e[31m  Yes, delete\e[0m|yes' \
-          $'\e[90m  No, cancel\e[0m|no' \
-          | fzf --ansi --with-nth=1 --delimiter='|' \
+          "yes|  \033[31m Yes, delete\033[0m" \
+          "no|  \033[90m Cancel\033[0m" \
+          | fzf --ansi --with-nth=2.. --delimiter='|' \
             --height=30% --layout=reverse --border=rounded \
             --margin=1,2 --padding=1 \
             --prompt="  " --pointer="" \
-            --header=$'\n  \033[1;31m Delete '$name$'?\033[0m\n  \033[90m'$wt_path$'\033[0m'"$proc_warning"$'\n' \
+            --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;31mDelete '$name$'?\033[0m\n\n  \033[90m'$wt_path$'\033[0m'"$proc_warning"$'\n' \
             --header-first \
             --color='bg+:#45303a,bg:#1e1e2e,spinner:#f38ba8,hl:#f38ba8' \
             --color='fg:#cdd6f4,header:#f38ba8,info:#f38ba8,pointer:#f38ba8' \
             --color='marker:#f38ba8,fg+:#cdd6f4,prompt:#f38ba8,hl+:#f38ba8' \
             --color='border:#f38ba8' \
-          | cut -d'|' -f2)
+          | cut -d'|' -f1)
         
         if [[ "$confirm" == "yes" ]]; then
           echo ""
