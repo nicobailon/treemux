@@ -1,0 +1,668 @@
+#!/usr/bin/env zsh
+
+# treemux - Git worktree + tmux session manager
+# https://github.com/nicobailon/treemux
+
+TREEMUX_VERSION="0.1.0"
+TREEMUX_SCRIPT_PATH="${0:A}"
+
+# Handle both sourced and executed contexts
+_treemux_return() {
+  if [[ $ZSH_EVAL_CONTEXT =~ :file$ ]]; then
+    return "${1:-0}"
+  else
+    exit "${1:-0}"
+  fi
+}
+
+# Config with smart defaults
+TREEMUX_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/treemux/config"
+
+treemux_default_branch() {
+  git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main"
+}
+
+treemux_load_config() {
+  TREEMUX_BASE_BRANCH="${TREEMUX_BASE_BRANCH:-$(treemux_default_branch)}"
+  TREEMUX_PATH_PATTERN="${TREEMUX_PATH_PATTERN:-sibling}"
+  TREEMUX_SESSION_NAME="${TREEMUX_SESSION_NAME:-folder}"
+  
+  [[ -f "$TREEMUX_CONFIG" ]] && source "$TREEMUX_CONFIG"
+}
+
+treemux_get_worktree_path() {
+  local name="$1"
+  local repo_root=$(git rev-parse --show-toplevel)
+  local parent=${repo_root:h}
+  local repo_name=${repo_root:t}
+  
+  case "$TREEMUX_PATH_PATTERN" in
+    sibling) echo "$parent/$repo_name-$name" ;;
+    subdirectory) echo "$repo_root/.worktrees/$name" ;;
+    *) echo "$parent/$repo_name-$name" ;;
+  esac
+}
+
+treemux_get_session_name() {
+  local wt_path="$1"
+  
+  case "$TREEMUX_SESSION_NAME" in
+    folder) echo "${wt_path:t}" ;;
+    branch) git -C "$wt_path" branch --show-current 2>/dev/null || echo "${wt_path:t}" ;;
+    *) echo "${wt_path:t}" ;;
+  esac
+}
+
+treemux_clean() {
+  git rev-parse --git-dir &>/dev/null || { echo "Not in a git repository"; _treemux_return 1; }
+  
+  local worktrees=("${(@f)$(git worktree list)}")
+  local sessions=("${(@f)$(tmux list-sessions -F '#{session_name}' 2>/dev/null)}")
+  
+  local wt_names=()
+  for line in "${worktrees[@]}"; do
+    local wt_path=${line%% *}
+    wt_names+=("${wt_path:t}")
+  done
+  
+  local orphaned_sessions=()
+  for session in "${sessions[@]}"; do
+    local found=0
+    for wt_name in "${wt_names[@]}"; do
+      [[ "$session" == "$wt_name" ]] && found=1 && break
+    done
+    [[ $found -eq 0 ]] && orphaned_sessions+=("$session")
+  done
+  
+  local worktrees_without_sessions=()
+  for wt_name in "${wt_names[@]}"; do
+    local found=0
+    for session in "${sessions[@]}"; do
+      [[ "$session" == "$wt_name" ]] && found=1 && break
+    done
+    [[ $found -eq 0 ]] && worktrees_without_sessions+=("$wt_name")
+  done
+  
+  if [[ ${#orphaned_sessions[@]} -eq 0 ]] && [[ ${#worktrees_without_sessions[@]} -eq 0 ]]; then
+    echo ""
+    echo -e "  \033[32m\033[0m All clean! No orphans found."
+    echo ""
+    _treemux_return 0
+  fi
+  
+  local lines=()
+  local red=$'\e[31m' yellow=$'\e[33m' cyan=$'\e[36m' gray=$'\e[38;5;250m' reset=$'\e[0m'
+  for session in "${orphaned_sessions[@]}"; do
+    lines+=("session|$session|${red} orphan ${reset} ${gray}Session without worktree:${reset}  ${cyan}$session${reset}")
+  done
+  for wt_name in "${worktrees_without_sessions[@]}"; do
+    lines+=("worktree|$wt_name|${yellow} no session ${reset} ${gray}Worktree without session:${reset}  ${cyan}$wt_name${reset}")
+  done
+  
+  local selected=$(printf '%s\n' "${lines[@]}" | fzf \
+    --ansi \
+    --multi \
+    --with-nth=3.. \
+    --delimiter='|' \
+    --height=80% \
+    --layout=reverse \
+    --border=rounded \
+    --margin=1,2 \
+    --padding=1 \
+    --prompt="  " \
+    --pointer="" \
+    --marker="✓" \
+    --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;38;5;212mt\033[38;5;213mr\033[38;5;177me\033[38;5;141me\033[38;5;105mm\033[38;5;69mu\033[38;5;33mx\033[0m \033[90mclean\033[0m\n\n  \033[38;5;250mSelect items to clean up (TAB to multi-select, ENTER to confirm)\033[0m\n  \033[38;5;103mtab\033[0m \033[38;5;250mselect\033[0m  \033[38;5;103menter\033[0m \033[38;5;250mconfirm\033[0m  \033[38;5;103mesc\033[0m \033[38;5;250mcancel\033[0m\n' \
+    --header-first \
+    --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
+    --color='fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc' \
+    --color='marker:#a6e3a1,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8' \
+    --color='border:#6c7086,preview-border:#6c7086' \
+  )
+  
+  [[ -z "$selected" ]] && _treemux_return 0
+  
+  echo ""
+  local cleaned=0
+  while IFS= read -r item; do
+    local type=$(echo "$item" | cut -d'|' -f1)
+    local name=$(echo "$item" | cut -d'|' -f2)
+    
+    if [[ "$type" == "session" ]]; then
+      tmux kill-session -t "$name" 2>/dev/null
+      echo -e "  \033[31m\033[0m Killed session: \033[36m$name\033[0m"
+      cleaned=1
+    elif [[ "$type" == "worktree" ]]; then
+      for line in "${worktrees[@]}"; do
+        local wt_path=${line%% *}
+        if [[ "${wt_path:t}" == "$name" ]]; then
+          tmux new-session -d -s "$name" -c "$wt_path" 2>/dev/null
+          echo -e "  \033[32m\033[0m Created session: \033[36m$name\033[0m"
+          cleaned=1
+          break
+        fi
+      done
+    fi
+  done <<< "$selected"
+  
+  [[ $cleaned -eq 1 ]] && echo ""
+}
+
+treemux_main() {
+  git rev-parse --git-dir &>/dev/null || { echo "Not in a git repository"; _treemux_return 1; }
+  
+  local current_wt=$(git rev-parse --show-toplevel 2>/dev/null)
+  
+  if [[ ! -n "$TMUX" ]] && [[ "$1" != "-l" ]]; then
+    local session_name=${current_wt:t}
+    local script_path="$TREEMUX_SCRIPT_PATH"
+    if tmux has-session -t "$session_name" 2>/dev/null; then
+      echo -e "  \033[90mAttaching to session:\033[0m \033[36m$session_name\033[0m"
+      exec tmux attach -t "$session_name"
+    else
+      echo -e "  \033[32m\033[0m \033[90mCreated session:\033[0m \033[36m$session_name\033[0m"
+      tmux new-session -d -s "$session_name" -c "$current_wt"
+      tmux send-keys -t "$session_name" "$script_path --new-session" Enter
+      exec tmux attach -t "$session_name"
+    fi
+  fi
+  
+  local is_new_session=""
+  if [[ "$1" == "--new-session" ]]; then
+    is_new_session="1"
+    shift
+  fi
+  
+  treemux_load_config
+  
+  local worktrees=("${(@f)$(git worktree list)}")
+  local lines=()
+  
+  local current_line=""
+  for line in "${worktrees[@]}"; do
+    local wt_path=${line%% *}
+    local branch=${line##*\[}
+    branch=${branch%]}
+    local name=${wt_path:t}
+    local has_session=$(tmux has-session -t "$name" 2>/dev/null && echo "1")
+    
+    local reset=$'\e[0m'
+    local name_color=$'\e[36m'
+    local branch_color=$'\e[33m'
+    local current_mark=$([[ "$wt_path" == "$current_wt" ]] && echo $'\e[35m● \e[0m' || echo "  ")
+    local session_icon=$([[ -n "$has_session" ]] && echo $'\e[32m\e[0m' || echo $'\e[90m\e[0m')
+    
+    local padded_name=$(printf "%-30s" "$name")
+    local formatted_line="$wt_path|${current_mark}${session_icon}  ${name_color}${padded_name}${reset} ${branch_color} ${branch}${reset}"
+    
+    if [[ "$wt_path" == "$current_wt" ]]; then
+      current_line="$formatted_line"
+    else
+      lines+=("$formatted_line")
+    fi
+  done
+  
+  # Put current worktree at the top
+  [[ -n "$current_line" ]] && lines=("$current_line" "${lines[@]}")
+  
+  # Find orphaned sessions (sessions without matching worktree)
+  local sessions=("${(@f)$(tmux list-sessions -F '#{session_name}' 2>/dev/null)}")
+  local wt_names=()
+  for line in "${worktrees[@]}"; do
+    local wt_path=${line%% *}
+    wt_names+=("${wt_path:t}")
+  done
+  
+  local orphaned_sessions=()
+  for session in "${sessions[@]}"; do
+    local found=0
+    for wt_name in "${wt_names[@]}"; do
+      [[ "$session" == "$wt_name" ]] && found=1 && break
+    done
+    [[ $found -eq 0 ]] && orphaned_sessions+=("$session")
+  done
+  
+  # Add orphaned sessions to the list
+  if [[ ${#orphaned_sessions[@]} -gt 0 ]]; then
+    local dim=$'\e[90m'
+    local red=$'\e[31m'
+    local reset=$'\e[0m'
+    lines+=("separator|     ${dim}────────────────────────────────────────────────────${reset}")
+    lines+=("header|     ${dim}ORPHANED SESSIONS ${red}(no worktree)${reset}")
+    for session in "${orphaned_sessions[@]}"; do
+      local padded_name=$(printf "%-30s" "$session")
+      lines+=("orphan:$session|${red}  ${reset}  ${red}${padded_name}${reset} ${dim} orphan${reset}")
+    done
+  fi
+  
+  if [[ "$1" == "-l" ]]; then
+    echo ""
+    echo -e "  \033[1;35m Worktrees\033[0m"
+    echo ""
+    for item in "${lines[@]}"; do echo -e "  ${item#*|}"; done
+    echo ""
+    _treemux_return 0
+  fi
+  
+  if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
+    treemux_help
+    _treemux_return 0
+  fi
+  
+  if [[ "$1" == "-v" ]] || [[ "$1" == "--version" ]]; then
+    echo "treemux $TREEMUX_VERSION"
+    _treemux_return 0
+  fi
+  
+  if [[ "$1" == "clean" ]]; then
+    treemux_clean
+    _treemux_return 0
+  fi
+
+  local preview_cmd='
+    selected=$(echo {} | cut -d"|" -f1)
+    
+    # Helper to get running processes in a session
+    get_session_processes() {
+      local sess="$1"
+      tmux list-panes -t "$sess" -F "#{pane_pid}" 2>/dev/null | while read pid; do
+        ps -o comm= -p $pid 2>/dev/null
+        pgrep -P $pid 2>/dev/null | while read child; do
+          ps -o comm= -p $child 2>/dev/null
+        done
+      done | grep -v "^$" | sort -u
+    }
+    
+    # Handle orphaned sessions
+    if [[ "$selected" == orphan:* ]]; then
+      session_name=${selected#orphan:}
+      echo -e "\033[1;31m━━━ Orphaned Session ━━━\033[0m"
+      echo -e "\033[36m$session_name\033[0m"
+      echo ""
+      echo -e "\033[90mNo matching worktree found.\033[0m"
+      echo -e "\033[90mThis session can be deleted.\033[0m"
+      echo ""
+      if tmux has-session -t "$session_name" 2>/dev/null; then
+        echo -e "\033[1;34m━━━ Session Info ━━━\033[0m"
+        windows=$(tmux list-windows -t "$session_name" 2>/dev/null | wc -l | tr -d " ")
+        panes=$(tmux list-panes -t "$session_name" 2>/dev/null | wc -l | tr -d " ")
+        echo -e "\033[90mWindows:\033[0m $windows  \033[90mPanes:\033[0m $panes"
+        echo ""
+        echo -e "\033[1;33m━━━ Running Processes ━━━\033[0m"
+        procs=$(get_session_processes "$session_name")
+        if [[ -n "$procs" ]]; then
+          echo "$procs" | while read proc; do
+            echo -e "\033[33m \033[0m $proc"
+          done
+          echo ""
+          echo -e "\033[31m Killing will terminate these processes\033[0m"
+        else
+          echo -e "\033[90m No active processes\033[0m"
+        fi
+      fi
+      exit 0
+    fi
+    
+    # Handle separator/header
+    if [[ "$selected" == "separator" ]] || [[ "$selected" == "header" ]]; then
+      exit 0
+    fi
+    
+    wt_path="$selected"
+    name=$(basename "$wt_path")
+    
+    # Path
+    echo -e "\033[1;34m━━━ Path ━━━\033[0m"
+    echo -e "\033[90m$wt_path\033[0m"
+    echo ""
+    
+    # Status summary (compact)
+    echo -e "\033[1;34m━━━ Status ━━━\033[0m"
+    cd "$wt_path" 2>/dev/null || exit 0
+    status_output=$(git status --short 2>/dev/null || true)
+    if [[ -z "$status_output" ]]; then
+      echo -e "\033[32m Clean\033[0m"
+    else
+      modified=$(echo "$status_output" | grep -E "^ M| M|^MM" | wc -l | tr -d " ")
+      staged=$(echo "$status_output" | grep -E "^M|^A|^D|^R" | wc -l | tr -d " ")
+      untracked=$(echo "$status_output" | grep -E "^\?\?" | wc -l | tr -d " ")
+      [[ "$staged" -gt 0 ]] && echo -e "\033[32m $staged staged\033[0m"
+      [[ "$modified" -gt 0 ]] && echo -e "\033[33m $modified modified\033[0m"
+      [[ "$untracked" -gt 0 ]] && echo -e "\033[90m $untracked untracked\033[0m"
+    fi
+    
+    # Ahead/behind
+    upstream=$(git rev-parse --abbrev-ref @{upstream} 2>/dev/null)
+    if [[ -n "$upstream" ]]; then
+      ahead=$(git rev-list --count @{upstream}..HEAD 2>/dev/null || echo 0)
+      behind=$(git rev-list --count HEAD..@{upstream} 2>/dev/null || echo 0)
+      if [[ $ahead -gt 0 ]] || [[ $behind -gt 0 ]]; then
+        echo -e "\033[90m$ahead ahead, $behind behind $upstream\033[0m"
+      fi
+    fi
+    
+    # Session info + running processes
+    if tmux has-session -t "$name" 2>/dev/null; then
+      echo ""
+      echo -e "\033[1;34m━━━ Session ━━━\033[0m"
+      windows=$(tmux list-windows -t "$name" 2>/dev/null | wc -l | tr -d " ")
+      panes=$(tmux list-panes -t "$name" 2>/dev/null | wc -l | tr -d " ")
+      echo -e "\033[90mWindows:\033[0m $windows  \033[90mPanes:\033[0m $panes"
+      procs=$(get_session_processes "$name")
+      if [[ -n "$procs" ]]; then
+        echo ""
+        echo -e "\033[1;33m━━━ Running Processes ━━━\033[0m"
+        echo "$procs" | while read proc; do
+          echo -e "\033[33m \033[0m $proc"
+        done
+      fi
+    fi
+    echo ""
+    
+    # Recent commits
+    echo -e "\033[1;34m━━━ Recent Commits ━━━\033[0m"
+    git log --oneline --graph --decorate --color=always -6 2>/dev/null
+  '
+  
+  local reload_cmd='
+    wt_names=()
+    git worktree list | while read -r line; do
+      wt_path=${line%% *}; branch=${line##*\[}; branch=${branch%]}; name=${wt_path:t}
+      wt_names+=("$name")
+      has_session=$(tmux has-session -t "$name" 2>/dev/null && echo "1")
+      reset=$'"'"'\e[0m'"'"'; name_color=$'"'"'\e[36m'"'"'; branch_color=$'"'"'\e[33m'"'"'
+      current_mark="  "
+      session_icon=$([[ -n "$has_session" ]] && echo $'"'"'\e[32m\e[0m'"'"' || echo $'"'"'\e[90m\e[0m'"'"')
+      padded_name=$(printf "%-30s" "$name")
+      echo "$wt_path|${current_mark}${session_icon}  ${name_color}${padded_name}${reset} ${branch_color} ${branch}${reset}"
+    done
+    wt_names=($(git worktree list | while read -r line; do echo "${line%% *}" | xargs basename; done))
+    orphans=()
+    for session in $(tmux list-sessions -F "#{session_name}" 2>/dev/null); do
+      found=0
+      for wt_name in "${wt_names[@]}"; do [[ "$session" == "$wt_name" ]] && found=1 && break; done
+      [[ $found -eq 0 ]] && orphans+=("$session")
+    done
+    if [[ ${#orphans[@]} -gt 0 ]]; then
+      dim=$'"'"'\e[90m'"'"'; red=$'"'"'\e[31m'"'"'; reset=$'"'"'\e[0m'"'"'
+      echo "separator|     ${dim}────────────────────────────────────────────────────${reset}"
+      echo "header|     ${dim}ORPHANED SESSIONS ${red}(no worktree)${reset}"
+      for session in "${orphans[@]}"; do
+        padded_name=$(printf "%-30s" "$session")
+        echo "orphan:$session|${red}  ${reset}  ${red}${padded_name}${reset} ${dim} orphan${reset}"
+      done
+    fi
+  '
+
+  local repo_root=$(git rev-parse --show-toplevel)
+  local parent=${repo_root:h}
+  local repo_name=${repo_root:t}
+  
+  local welcome_msg=""
+  if [[ -n "$is_new_session" ]]; then
+    welcome_msg=$'\n  \033[32m Session created! Select a worktree and press enter.\033[0m'
+  fi
+  
+  local result=$(printf '%s\n' "${lines[@]}" | fzf \
+    --ansi \
+    --with-nth=2.. \
+    --delimiter='|' \
+    --height=80% \
+    --layout=reverse \
+    --border=rounded \
+    --margin=1,2 \
+    --padding=1 \
+    --prompt=" new worktree: " \
+    --pointer="" \
+    --marker="" \
+    --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;38;5;212mt\033[38;5;213mr\033[38;5;177me\033[38;5;141me\033[38;5;105mm\033[38;5;69mu\033[38;5;33mx\033[0m'"$welcome_msg"$'\n  \033[38;5;250mType name + enter to create new │ Select existing + enter to jump\033[0m\n  \033[38;5;103mtab\033[0m \033[38;5;250mactions\033[0m  \033[38;5;103mctrl-d\033[0m \033[38;5;250mdelete\033[0m  \033[38;5;103m?\033[0m \033[38;5;250mhelp\033[0m  \033[38;5;103mesc\033[0m \033[38;5;250mcancel\033[0m\n\n     \033[38;5;103mWORKTREE                        BRANCH\033[0m' \
+    --header-first \
+    --preview="$preview_cmd" \
+    --preview-window=right:50%:border-rounded \
+    --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
+    --color='fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc' \
+    --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8' \
+    --color='border:#6c7086,preview-border:#6c7086' \
+    --print-query \
+    --expect='tab,?' \
+    --bind="ctrl-d:execute(type=\$(echo {} | cut -d'|' -f1); if [[ \"\$type\" == orphan:* ]]; then name=\${type#orphan:}; tmux kill-session -t \"\$name\" 2>/dev/null; elif [[ \"\$type\" == \"separator\" ]] || [[ \"\$type\" == \"header\" ]]; then :; else wt=\"\$type\"; current=\$(git rev-parse --show-toplevel); if [[ \"\$wt\" == \"\$current\" ]]; then echo -e '\n  \033[31m Cannot delete current worktree. Switch to another first.\033[0m\n'; sleep 2; else name=\$(basename \"\$wt\"); tmux kill-session -t \"\$name\" 2>/dev/null; git worktree remove \"\$wt\" 2>/dev/null || git worktree remove --force \"\$wt\"; fi; fi)+reload($reload_cmd)" \
+  )
+  
+  local query=$(echo "$result" | sed -n '1p')
+  local key=$(echo "$result" | sed -n '2p')
+  local selected=$(echo "$result" | sed -n '3p')
+  
+  if [[ "$key" == "?" ]]; then
+    treemux_help
+    _treemux_return 0
+  fi
+  
+  if [[ -z "$selected" && -z "$key" && -z "$query" ]]; then
+    _treemux_return 0
+  fi
+  
+  # Skip separator and header lines
+  local selected_type=$(echo "$selected" | cut -d'|' -f1)
+  if [[ "$selected_type" == "separator" ]] || [[ "$selected_type" == "header" ]]; then
+    _treemux_return 0
+  fi
+  
+  # Handle orphaned sessions
+  if [[ "$selected_type" == orphan:* ]]; then
+    local orphan_name=${selected_type#orphan:}
+    
+    # Get running processes for warning
+    local procs=""
+    if tmux has-session -t "$orphan_name" 2>/dev/null; then
+      procs=$(tmux list-panes -t "$orphan_name" -F "#{pane_pid}" 2>/dev/null | while read pid; do
+        ps -o comm= -p $pid 2>/dev/null
+        pgrep -P $pid 2>/dev/null | while read child; do
+          ps -o comm= -p $child 2>/dev/null
+        done
+      done | grep -v "^$" | sort -u | head -5 | tr '\n' ', ' | sed 's/, $//')
+    fi
+    
+    local proc_warning=""
+    if [[ -n "$procs" ]]; then
+      proc_warning=$'\n  \033[33m Will terminate: '$procs$'\033[0m'
+    fi
+    
+    local confirm=$(printf "%s\n" \
+      $'\e[31m  Yes, kill session\e[0m|yes' \
+      $'\e[90m  No, cancel\e[0m|no' \
+      | fzf --ansi --with-nth=1 --delimiter='|' \
+        --height=30% --layout=reverse --border=rounded \
+        --margin=1,2 --padding=1 \
+        --prompt="  " --pointer="" \
+        --header=$'\n  \033[1;31m Kill orphaned session?\033[0m\n  \033[36m'$orphan_name$'\033[90m (no matching worktree)\033[0m'"$proc_warning"$'\n' \
+        --header-first \
+        --color='bg+:#45303a,bg:#1e1e2e,spinner:#f38ba8,hl:#f38ba8' \
+        --color='fg:#cdd6f4,header:#f38ba8,info:#f38ba8,pointer:#f38ba8' \
+        --color='marker:#f38ba8,fg+:#cdd6f4,prompt:#f38ba8,hl+:#f38ba8' \
+        --color='border:#f38ba8' \
+      | cut -d'|' -f2)
+    
+    if [[ "$confirm" == "yes" ]]; then
+      echo ""
+      tmux kill-session -t "$orphan_name" 2>/dev/null && echo -e "  \033[31m\033[0m  Killed orphaned session \033[36m$orphan_name\033[0m"
+      echo ""
+    fi
+    _treemux_return 0
+  fi
+  
+  if [[ -z "$selected" && -n "$query" ]]; then
+    local new_name=${query:-}
+    if [[ -z "$new_name" ]]; then
+      echo -e "\n  \033[31m Enter a name for the new worktree\033[0m\n"
+      _treemux_return 1
+    fi
+    
+    local default_branch=$(treemux_default_branch)
+    local branches=$(git branch --format='%(refname:short)' | grep -v '^\*')
+    local sorted_branches=$(echo "$default_branch"; echo "$branches" | grep -v "^${default_branch}$")
+    
+    local base_branch=$(echo "$sorted_branches" | fzf \
+      --ansi \
+      --height=50% \
+      --layout=reverse \
+      --border=rounded \
+      --margin=1,2 \
+      --padding=1 \
+      --prompt="  " \
+      --pointer="" \
+      --header=$'\n  \033[1;35m Base Branch\033[0m\n  \033[90mSelect branch to create \033[36m'$new_name$'\033[90m from\033[0m\n' \
+      --header-first \
+      --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
+      --color='fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc' \
+      --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8' \
+      --color='border:#6c7086' \
+    )
+    
+    [[ -z "$base_branch" ]] && _treemux_return 0
+    
+    local new_path=$(treemux_get_worktree_path "$new_name")
+    echo ""
+    if git worktree add "$new_path" -b "$new_name" "$base_branch" 2>/dev/null; then
+      local session_name=$(treemux_get_session_name "$new_path")
+      tmux new-session -d -s "$session_name" -c "$new_path"
+      echo -e "  \033[32m\033[0m  Created \033[36m$new_name\033[0m from \033[33m$base_branch\033[0m"
+      echo ""
+      local wt_path="$new_path"
+      local name="$session_name"
+    else
+      echo -e "  \033[31m\033[0m  Failed to create worktree '$new_name'"
+      echo ""
+      _treemux_return 1
+    fi
+  elif [[ "$key" == "tab" ]]; then
+    local wt_path=$(echo "$selected" | cut -d'|' -f1)
+    local name=${wt_path:t}
+    
+    local action=$(printf "%s\n" \
+      $'\e[32m  Jump\e[0m|jump' \
+      $'\e[31m  Delete\e[0m|delete' \
+      $'\e[90m  Cancel\e[0m|cancel' \
+      | fzf --ansi --with-nth=1 --delimiter='|' \
+        --height=30% --layout=reverse --border=rounded \
+        --margin=1,2 --padding=1 \
+        --prompt="  " --pointer="" \
+        --header=$'\n  \033[1;35m'$name$'\033[0m\n' \
+        --header-first \
+        --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
+        --color='fg:#cdd6f4,header:#cba6f7,info:#cba6f7,pointer:#f5e0dc' \
+        --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8' \
+        --color='border:#6c7086' \
+      | cut -d'|' -f2)
+    
+    case "$action" in
+      jump) ;;
+      delete)
+        # Get running processes for warning
+        local procs=""
+        if tmux has-session -t "$name" 2>/dev/null; then
+          procs=$(tmux list-panes -t "$name" -F "#{pane_pid}" 2>/dev/null | while read pid; do
+            ps -o comm= -p $pid 2>/dev/null
+            pgrep -P $pid 2>/dev/null | while read child; do
+              ps -o comm= -p $child 2>/dev/null
+            done
+          done | grep -v "^$" | sort -u | head -5 | tr '\n' ', ' | sed 's/, $//')
+        fi
+        
+        local proc_warning=""
+        if [[ -n "$procs" ]]; then
+          proc_warning=$'\n  \033[33m Will terminate: '$procs$'\033[0m'
+        fi
+        
+        local confirm=$(printf "%s\n" \
+          $'\e[31m  Yes, delete\e[0m|yes' \
+          $'\e[90m  No, cancel\e[0m|no' \
+          | fzf --ansi --with-nth=1 --delimiter='|' \
+            --height=30% --layout=reverse --border=rounded \
+            --margin=1,2 --padding=1 \
+            --prompt="  " --pointer="" \
+            --header=$'\n  \033[1;31m Delete '$name$'?\033[0m\n  \033[90m'$wt_path$'\033[0m'"$proc_warning"$'\n' \
+            --header-first \
+            --color='bg+:#45303a,bg:#1e1e2e,spinner:#f38ba8,hl:#f38ba8' \
+            --color='fg:#cdd6f4,header:#f38ba8,info:#f38ba8,pointer:#f38ba8' \
+            --color='marker:#f38ba8,fg+:#cdd6f4,prompt:#f38ba8,hl+:#f38ba8' \
+            --color='border:#f38ba8' \
+          | cut -d'|' -f2)
+        
+        if [[ "$confirm" == "yes" ]]; then
+          echo ""
+          tmux kill-session -t "$name" 2>/dev/null && echo -e "  \033[33m\033[0m  Killed session \033[36m$name\033[0m"
+          if git worktree remove "$wt_path" 2>/dev/null; then
+            echo -e "  \033[31m\033[0m  Removed \033[90m$wt_path\033[0m"
+          else
+            git worktree remove --force "$wt_path"
+            echo -e "  \033[31m\033[0m  Force removed \033[90m$wt_path\033[0m"
+          fi
+          echo ""
+        fi
+        _treemux_return 0
+        ;;
+      *) _treemux_return 0 ;;
+    esac
+  else
+    [[ -z "$selected" ]] && _treemux_return 0
+    local wt_path=$(echo "$selected" | cut -d'|' -f1)
+    local name=${wt_path:t}
+  fi
+  
+  if [[ "$PWD" == "$wt_path"* ]]; then
+    echo -e "\n  \033[90m Already in \033[36m$name\033[0m\n"
+    _treemux_return 0
+  fi
+  
+  tmux has-session -t "$name" 2>/dev/null || tmux new-session -d -s "$name" -c "$wt_path"
+  tmux switch-client -t "$name"
+}
+
+treemux_help() {
+  cat << 'EOF'
+
+  treemux - Git worktree + tmux session manager
+
+  USAGE
+    treemux              Open interactive TUI
+    treemux clean        Find and fix orphaned sessions/worktrees
+    treemux -l           List worktrees (no interaction)
+    treemux -h, --help   Show this help
+    treemux -v           Show version
+
+  KEYBINDINGS
+    enter                Jump to selected / Create new worktree
+    tab                  Actions menu (jump, delete)
+    ctrl-d               Delete selected worktree + session
+    ?                    Show this help
+    esc                  Cancel
+
+  HOW IT WORKS
+    - Type a name and press enter to create a new worktree + tmux session
+    - Select an existing worktree and press enter to jump to it
+    - Each worktree gets its own tmux session automatically
+    - Deleting a worktree also kills its tmux session
+
+  CLEANUP
+    Run 'treemux clean' to find:
+    - Orphaned tmux sessions (worktree was deleted outside treemux)
+    - Worktrees without sessions (created outside treemux)
+
+  CONFIG
+    Create ~/.config/treemux/config with:
+
+    # Default branch for new worktrees (default: auto-detect or "main")
+    TREEMUX_BASE_BRANCH="main"
+
+    # Where to create worktrees: sibling (default) or subdirectory
+    # sibling:      ~/dev/myrepo-feature (next to original repo)
+    # subdirectory: ~/dev/myrepo/.worktrees/feature (inside repo)
+    TREEMUX_PATH_PATTERN="sibling"
+
+    # Session naming: folder (default) or branch
+    TREEMUX_SESSION_NAME="folder"
+
+EOF
+}
+
+treemux_main "$@"
