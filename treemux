@@ -469,9 +469,9 @@ treemux_main() {
     
     local green=$'\e[32m' red=$'\e[31m' dim=$'\e[90m' reset=$'\e[0m'
     local action=$(printf "%s\n" \
-      "adopt|  ${green} Adopt${reset} ${dim}(create worktree)${reset}" \
-      "kill|  ${red} Kill session${reset}" \
-      "back|  ${dim} Back${reset}" \
+      "adopt|  ${green}+ Adopt${reset} ${dim}(create worktree)${reset}" \
+      "kill|  ${red}x Kill session${reset}" \
+      "back|  ${dim}< Back${reset}" \
       | fzf --ansi --with-nth=2.. --delimiter='|' \
         --height=35% --layout=reverse --border=rounded \
         --margin=1,2 --padding=1 \
@@ -532,8 +532,8 @@ treemux_main() {
         fi
         
         local confirm=$(printf "%s\n" \
-          "yes|  ${red} Yes, kill session${reset}" \
-          "no|  ${dim} Cancel${reset}" \
+          "yes|  ${red}x Yes, kill session${reset}" \
+          "no|  ${dim}< Cancel${reset}" \
           | fzf --ansi --with-nth=2.. --delimiter='|' \
             --height=30% --layout=reverse --border=rounded \
             --margin=1,2 --padding=1 \
@@ -608,9 +608,9 @@ treemux_main() {
     
     local green=$'\e[32m' red=$'\e[31m' dim=$'\e[90m' reset=$'\e[0m'
     local action=$(printf "%s\n" \
-      "jump|  ${green} Jump${reset}" \
-      "delete|  ${red} Delete${reset}" \
-      "back|  ${dim} Back${reset}" \
+      "jump|  ${green}> Jump${reset}" \
+      "delete|  ${red}x Delete${reset}" \
+      "back|  ${dim}< Back${reset}" \
       | fzf --ansi --with-nth=2.. --delimiter='|' \
         --height=30% --layout=reverse --border=rounded \
         --margin=1,2 --padding=1 \
@@ -643,8 +643,8 @@ treemux_main() {
         fi
         
         local confirm=$(printf "%s\n" \
-          "yes|  ${red} Yes, delete${reset}" \
-          "no|  ${dim} Cancel${reset}" \
+          "yes|  ${red}x Yes, delete${reset}" \
+          "no|  ${dim}< Cancel${reset}" \
           | fzf --ansi --with-nth=2.. --delimiter='|' \
             --height=30% --layout=reverse --border=rounded \
             --margin=1,2 --padding=1 \
