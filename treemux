@@ -577,8 +577,8 @@ treemux_main() {
       "back|  ${dim}< Back${reset}" \
       | fzf --ansi --with-nth=2.. --delimiter='|' \
         --tmux=center,50%,50% --layout=reverse --border=rounded \
-        --margin=1,2 --padding=1 \
-        --prompt="  " --pointer="" \
+        --no-info --padding=1 \
+        --prompt="" --pointer="" \
         --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;35mOrphaned Session\033[0m\n\n  \033[36m'$orphan_name$'\033[0m\n  \033[90mNo matching worktree\033[0m'"$proc_warning"$'\n' \
         --header-first \
         --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
@@ -642,9 +642,9 @@ treemux_main() {
           "yes|  ${red}x Yes, kill session${reset}" \
           "no|  ${dim}< Cancel${reset}" \
           | fzf --ansi --with-nth=2.. --delimiter='|' \
-            --tmux=center,50%,40% --layout=reverse --border=rounded \
-            --margin=1,2 --padding=1 \
-            --prompt="  " --pointer="" \
+            --tmux=center,50%,40% --layout=reverse --border=rounded --no-info \
+            --padding=1 \
+            --prompt="" --pointer="" \
             --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;31mKill Session?\033[0m\n\n  \033[36m'$orphan_name$'\033[0m'"$kill_warning"$'\n' \
             --header-first \
             --color='bg+:#45303a,bg:#1e1e2e,spinner:#f38ba8,hl:#f38ba8' \
@@ -677,9 +677,9 @@ treemux_main() {
     
     local action=$(echo -e "$menu_items" \
       | fzf --ansi --with-nth=2.. --delimiter='|' \
-        --tmux=center,50%,40% --layout=reverse --border=rounded \
-        --margin=1,2 --padding=1 \
-        --prompt="  " --pointer="" \
+        --tmux=center,50%,40% --layout=reverse --border=rounded --no-info \
+        --padding=1 \
+        --prompt="" --pointer="" \
         --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;35m'$name$'\033[0m\n' \
         --header-first \
         --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
@@ -711,9 +711,9 @@ treemux_main() {
           "yes|  ${red}x Yes, delete${reset}" \
           "no|  ${dim}< Cancel${reset}" \
           | fzf --ansi --with-nth=2.. --delimiter='|' \
-            --tmux=center,50%,40% --layout=reverse --border=rounded \
-            --margin=1,2 --padding=1 \
-            --prompt="  " --pointer="" \
+            --tmux=center,50%,40% --layout=reverse --border=rounded --no-info \
+            --padding=1 \
+            --prompt="" --pointer="" \
             --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;31mDelete '$name$'?\033[0m\n\n  \033[90m'$wt_path$'\033[0m'"$proc_warning"$'\n' \
             --header-first \
             --color='bg+:#45303a,bg:#1e1e2e,spinner:#f38ba8,hl:#f38ba8' \
@@ -755,9 +755,9 @@ treemux_main() {
           "yes|  ${red}x Yes, kill session${reset}" \
           "no|  ${dim}< Cancel${reset}" \
           | fzf --ansi --with-nth=2.. --delimiter='|' \
-            --tmux=center,50%,40% --layout=reverse --border=rounded \
-            --margin=1,2 --padding=1 \
-            --prompt="  " --pointer="" \
+            --tmux=center,50%,40% --layout=reverse --border=rounded --no-info \
+            --padding=1 \
+            --prompt="" --pointer="" \
             --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;33mKill session?\033[0m\n\n  \033[36m'$name$'\033[0m \033[90m(worktree will remain)\033[0m'"$proc_warning"$'\n' \
             --header-first \
             --color='bg+:#3d3a50,bg:#1e1e2e,spinner:#f9e2af,hl:#f9e2af' \
