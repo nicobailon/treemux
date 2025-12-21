@@ -659,7 +659,7 @@ treemux_main() {
           echo ""
         fi
         ;;
-      back) _treemux_return 0 ;;
+      back) treemux_main; _treemux_return 0 ;;
       *) ;;
     esac
     _treemux_return 0
@@ -774,7 +774,7 @@ treemux_main() {
         fi
         _treemux_return 0
         ;;
-      *) _treemux_return 0 ;;
+      *) treemux_main; _treemux_return 0 ;;
     esac
   else
     [[ -z "$selected" ]] && _treemux_return 0
