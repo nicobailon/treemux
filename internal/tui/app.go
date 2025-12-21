@@ -260,8 +260,7 @@ func switchRecentCmd(svc *workspace.Service, entry recent.Entry, store *recent.S
 
 func switchSessionCmd(svc *workspace.Service, name string) tea.Cmd {
 	return func() tea.Msg {
-		err := svc.SwitchSession(name)
-		return resultMsg{action: "jump", err: err}
+		return jumpMsg{sessionName: name}
 	}
 }
 
