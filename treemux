@@ -323,7 +323,7 @@ treemux_main() {
       fi
       echo ""
       echo -e "\033[90m─────────────────────────────────────\033[0m"
-      echo -e "\033[38;5;250menter\033[0m \033[90mto adopt or kill\033[0m"
+      echo -e "\033[38;5;250menter\033[0m \033[90mto jump, adopt, or kill\033[0m"
       exit 0
     fi
     
@@ -398,6 +398,7 @@ treemux_main() {
   '
   
   local reload_cmd='
+    current_wt=$(git rev-parse --show-toplevel 2>/dev/null)
     green=$'"'"'\e[32m'"'"'; reset=$'"'"'\e[0m'"'"'
     echo "create|${green}+ Create new worktree...${reset}"
     wt_names=()
@@ -405,10 +406,11 @@ treemux_main() {
       wt_path=${line%% *}; branch=${line##*\[}; branch=${branch%]}; name=${wt_path:t}
       wt_names+=("$name")
       has_session=$(tmux has-session -t "$name" 2>/dev/null && echo "1")
-      reset=$'"'"'\e[0m'"'"'; name_color=$'"'"'\e[36m'"'"'; branch_color=$'"'"'\e[33m'"'"'; dim=$'"'"'\e[90m'"'"'
+      reset=$'"'"'\e[0m'"'"'; name_color=$'"'"'\e[36m'"'"'; branch_color=$'"'"'\e[33m'"'"'; dim=$'"'"'\e[90m'"'"'; purple=$'"'"'\e[35m'"'"'
+      current_mark=$([[ "$wt_path" == "$current_wt" ]] && echo "${purple}●${reset} " || echo "  ")
       session_label=$([[ -n "$has_session" ]] && echo "" || echo " ${dim}no session${reset}")
       padded_name=$(printf "%-30s" "$name")
-      echo "$wt_path|  ${name_color}${padded_name}${reset} ${branch_color}${branch}${reset}${session_label}"
+      echo "$wt_path|${current_mark}${name_color}${padded_name}${reset} ${branch_color}${branch}${reset}${session_label}"
     done
     wt_names=($(git worktree list | while read -r line; do echo "${line%% *}" | xargs basename; done))
     orphans=()
@@ -526,15 +528,23 @@ treemux_main() {
     
     local new_path=$(treemux_get_worktree_path "$new_name")
     echo ""
+    local created=0
     if git worktree add "$new_path" -b "$new_name" "$base_branch" 2>/dev/null; then
-      local session_name=$(treemux_get_session_name "$new_path")
-      tmux new-session -d -s "$session_name" -c "$new_path"
       echo -e "  \033[32m\033[0m  Created \033[36m$new_name\033[0m from \033[33m$base_branch\033[0m"
-      echo ""
-      tmux switch-client -t "$session_name"
+      created=1
+    elif git show-ref --verify --quiet "refs/heads/$new_name" && git worktree add "$new_path" "$new_name" 2>/dev/null; then
+      echo -e "  \033[32m\033[0m  Created worktree for existing branch \033[36m$new_name\033[0m"
+      created=1
     else
       echo -e "  \033[31m\033[0m  Failed to create worktree '$new_name'"
+      echo -e "  \033[90m    Branch may already exist or path conflict\033[0m"
       echo ""
+    fi
+    if [[ $created -eq 1 ]]; then
+      local session_name=$(treemux_get_session_name "$new_path")
+      tmux new-session -d -s "$session_name" -c "$new_path"
+      echo ""
+      tmux switch-client -t "$session_name"
     fi
     _treemux_return 0
   fi
