@@ -402,10 +402,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch {
 				case strings.Contains(title, "Jump"):
 					if m.pendingWT != nil {
-						return m, jumpCmd(m.svc, m.pendingWT.Worktree.Name, m.pendingWT.Worktree.Path, m.recentStore)
+						sessionName := m.svc.SessionName(m.pendingWT.Worktree.Path)
+						if !m.svc.Tmux.HasSession(sessionName) {
+							_ = m.svc.Tmux.NewSession(sessionName, m.pendingWT.Worktree.Path)
+						}
+						if m.recentStore != nil {
+							m.recentStore.Add(m.svc.Git.RepoRoot, m.pendingWT.Worktree.Name, sessionName, m.pendingWT.Worktree.Path)
+							_ = m.recentStore.Save()
+						}
+						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: m.pendingWT.Worktree.Path}
+						return m, tea.Quit
 					}
 					if m.pending != "" {
-						return m, switchSessionCmd(m.svc, m.pending)
+						m.jumpTarget = &JumpTarget{SessionName: m.pending}
+						return m, tea.Quit
 					}
 				case strings.Contains(title, "Delete worktree"):
 					if m.pendingWT != nil {
@@ -495,7 +505,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.state = stateOrphanMenu
 				case kindRecent:
 					r := sel.data.(recent.Entry)
-					cmds = append(cmds, switchRecentCmd(m.svc, r, m.recentStore))
+					if m.recentStore != nil {
+						m.recentStore.Add(r.RepoRoot, r.Worktree, r.SessionName, r.Path)
+						_ = m.recentStore.Save()
+					}
+					m.jumpTarget = &JumpTarget{SessionName: r.SessionName, Path: r.Path}
+					return m, tea.Quit
 				}
 			}
 		case "tab":
