@@ -363,9 +363,32 @@ body {
 
 .tui__orphan-name {
   color: var(--yellow);
+  padding-left: 20px;
 }
 
 .tui__orphan-label {
+  margin-left: auto;
+  color: var(--dim);
+}
+
+.tui__item--header {
+  color: var(--yellow);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+}
+
+.tui__header-dim {
+  color: var(--dim);
+  margin-left: 8px;
+}
+
+.tui__recent-name {
+  color: var(--mauve);
+  padding-left: 20px;
+}
+
+.tui__recent-label {
   margin-left: auto;
   color: var(--dim);
 }

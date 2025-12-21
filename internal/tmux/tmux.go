@@ -26,14 +26,7 @@ func (t *Tmux) KillSession(name string) error {
 }
 
 func (t *Tmux) SwitchClient(name string) error {
-	if t.IsInsideTmux() {
-		cmd := exec.Command("tmux", "switch-client", "-t", name)
-		return cmd.Run()
-	}
-	cmd := exec.Command("tmux", "attach", "-t", name)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd := exec.Command("tmux", "switch-client", "-t", name)
 	return cmd.Run()
 }
 

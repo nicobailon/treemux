@@ -95,13 +95,38 @@ func runRoot(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "tmux bootstrap failed: %v\n", err)
 			fmt.Fprintln(os.Stderr, "falling back to running TUI in current shell (no tmux session created)")
 			app := tui.New(svc)
-			return app.Run()
+			target, err := app.Run()
+			if err != nil {
+				return err
+			}
+			if target != nil {
+				return attachToSession(target.SessionName)
+			}
+			return nil
 		}
 		return nil
 	}
 
 	app := tui.New(svc)
-	return app.Run()
+	target, err := app.Run()
+	if err != nil {
+		return err
+	}
+	if target != nil {
+		if t.IsInsideTmux() {
+			return t.SwitchClient(target.SessionName)
+		}
+		return attachToSession(target.SessionName)
+	}
+	return nil
+}
+
+func attachToSession(name string) error {
+	cmd := exec.Command("tmux", "attach", "-t", name)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func bootstrapTmux(repoRoot string) error {

@@ -87,6 +87,12 @@ type model struct {
 	pendingWT       *workspace.WorktreeState
 	loading         bool
 	filtering       bool
+	jumpTarget      *JumpTarget
+}
+
+type JumpTarget struct {
+	SessionName string
+	Path        string
 }
 
 type App struct {
@@ -97,11 +103,17 @@ func New(svc *workspace.Service) *App {
 	return &App{svc: svc}
 }
 
-func (a *App) Run() error {
+func (a *App) Run() (*JumpTarget, error) {
 	m := initialModel(a.svc)
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
-	return err
+	finalModel, err := p.Run()
+	if err != nil {
+		return nil, err
+	}
+	if fm, ok := finalModel.(model); ok && fm.jumpTarget != nil {
+		return fm.jumpTarget, nil
+	}
+	return nil, nil
 }
 
 func initialModel(svc *workspace.Service) model {
@@ -213,26 +225,36 @@ func killSessionCmd(svc *workspace.Service, name string) tea.Cmd {
 	}
 }
 
+type jumpMsg struct {
+	sessionName string
+	path        string
+	repoRoot    string
+	worktree    string
+}
+
 func jumpCmd(svc *workspace.Service, name, path string, store *recent.Store) tea.Cmd {
 	return func() tea.Msg {
-		err := svc.Jump(name, path)
-		if err == nil && store != nil {
-			sessionName := svc.SessionName(path)
+		sessionName := svc.SessionName(path)
+		if !svc.Tmux.HasSession(sessionName) {
+			if err := svc.Tmux.NewSession(sessionName, path); err != nil {
+				return resultMsg{action: "jump", err: err}
+			}
+		}
+		if store != nil {
 			store.Add(svc.Git.RepoRoot, name, sessionName, path)
 			_ = store.Save()
 		}
-		return resultMsg{action: "jump", err: err}
+		return jumpMsg{sessionName: sessionName, path: path, repoRoot: svc.Git.RepoRoot, worktree: name}
 	}
 }
 
 func switchRecentCmd(svc *workspace.Service, entry recent.Entry, store *recent.Store) tea.Cmd {
 	return func() tea.Msg {
-		err := svc.SwitchSession(entry.SessionName)
-		if err == nil && store != nil {
+		if store != nil {
 			store.Add(entry.RepoRoot, entry.Worktree, entry.SessionName, entry.Path)
 			_ = store.Save()
 		}
-		return resultMsg{action: "jump", err: err}
+		return jumpMsg{sessionName: entry.SessionName, path: entry.Path, repoRoot: entry.RepoRoot, worktree: entry.Worktree}
 	}
 }
 
@@ -294,6 +316,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = m.nextBranchState
 		return m, nil
 
+	case jumpMsg:
+		m.jumpTarget = &JumpTarget{SessionName: msg.sessionName, Path: msg.path}
+		return m, tea.Quit
+
 	case resultMsg:
 		if msg.err != nil {
 			m.err = msg.err
@@ -301,10 +327,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = nil
 		}
 		switch msg.action {
-		case "jump":
-			if msg.err == nil {
-				return m, tea.Quit
-			}
 		case "create", "delete", "kill-session", "adopt":
 			m.state = stateMain
 			return m, loadDataCmd(m.svc)
