@@ -204,8 +204,13 @@ treemux_main() {
     fi
   done
   
-  # Put current worktree at the top
+  # Put current worktree at the top, then add "Create new" at very top
   [[ -n "$current_line" ]] && lines=("$current_line" "${lines[@]}")
+  
+  # Add "Create new worktree" option at the top
+  local green=$'\e[32m'
+  local reset=$'\e[0m'
+  lines=("create|${green}+  Create new worktree...${reset}" "${lines[@]}")
   
   # Find orphaned sessions (sessions without matching worktree)
   local sessions=("${(@f)$(tmux list-sessions -F '#{session_name}' 2>/dev/null)}")
@@ -263,6 +268,21 @@ treemux_main() {
 
   local preview_cmd='
     selected=$(echo {} | cut -d"|" -f1)
+    
+    # Handle "Create new worktree" option
+    if [[ "$selected" == "create" ]]; then
+      echo -e "\033[1;32m━━━ Create New Worktree ━━━\033[0m"
+      echo ""
+      echo -e "\033[90mThis will:\033[0m"
+      echo -e "  \033[90m1. Create a new git worktree\033[0m"
+      echo -e "  \033[90m2. Create a new branch\033[0m"
+      echo -e "  \033[90m3. Create a tmux session\033[0m"
+      echo -e "  \033[90m4. Jump to the new session\033[0m"
+      echo ""
+      echo -e "\033[90m─────────────────────────────────────\033[0m"
+      echo -e "\033[38;5;250menter\033[0m \033[90mto create new worktree + session\033[0m"
+      exit 0
+    fi
     
     # Helper to get running processes in a session
     get_session_processes() {
@@ -379,6 +399,8 @@ treemux_main() {
   '
   
   local reload_cmd='
+    green=$'"'"'\e[32m'"'"'; reset=$'"'"'\e[0m'"'"'
+    echo "create|${green}+  Create new worktree...${reset}"
     wt_names=()
     git worktree list | while read -r line; do
       wt_path=${line%% *}; branch=${line##*\[}; branch=${branch%]}; name=${wt_path:t}
@@ -427,10 +449,10 @@ treemux_main() {
     --border=rounded \
     --margin=1,2 \
     --padding=1 \
-    --prompt=" new worktree: " \
+    --prompt="  " \
     --pointer="" \
     --marker="" \
-    --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;38;5;212mt\033[38;5;213mr\033[38;5;177me\033[38;5;141me\033[38;5;105mm\033[38;5;69mu\033[38;5;33mx\033[0m'"$welcome_msg"$'\n  \033[38;5;250mType name to create │ Select + enter to jump │ See preview for actions\033[0m\n  \033[38;5;103mtab\033[0m \033[38;5;250mmore\033[0m  \033[38;5;103mctrl-d\033[0m \033[38;5;250mdelete\033[0m  \033[38;5;103m?\033[0m \033[38;5;250mhelp\033[0m  \033[38;5;103mesc\033[0m \033[38;5;250mcancel\033[0m\n\n     \033[38;5;103mWORKTREE                        BRANCH\033[0m' \
+    --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;38;5;212mt\033[38;5;213mr\033[38;5;177me\033[38;5;141me\033[38;5;105mm\033[38;5;69mu\033[38;5;33mx\033[0m'"$welcome_msg"$'\n  \033[38;5;250mSelect + enter │ See preview for actions\033[0m\n  \033[38;5;103mtab\033[0m \033[38;5;250mmore\033[0m  \033[38;5;103mctrl-d\033[0m \033[38;5;250mdelete\033[0m  \033[38;5;103m?\033[0m \033[38;5;250mhelp\033[0m  \033[38;5;103mesc\033[0m \033[38;5;250mcancel\033[0m\n' \
     --header-first \
     --preview="$preview_cmd" \
     --preview-window=right:50%:border-rounded \
@@ -440,7 +462,7 @@ treemux_main() {
     --color='border:#6c7086,preview-border:#6c7086' \
     --print-query \
     --expect='tab,?' \
-    --bind="ctrl-d:execute(type=\$(echo {} | cut -d'|' -f1); if [[ \"\$type\" == orphan:* ]]; then name=\${type#orphan:}; tmux kill-session -t \"\$name\" 2>/dev/null; elif [[ \"\$type\" == \"separator\" ]] || [[ \"\$type\" == \"header\" ]]; then :; else wt=\"\$type\"; current=\$(git rev-parse --show-toplevel); if [[ \"\$wt\" == \"\$current\" ]]; then echo -e '\n  \033[31m Cannot delete current worktree. Switch to another first.\033[0m\n'; sleep 2; else name=\$(basename \"\$wt\"); tmux kill-session -t \"\$name\" 2>/dev/null; git worktree remove \"\$wt\" 2>/dev/null || git worktree remove --force \"\$wt\"; fi; fi)+reload($reload_cmd)" \
+    --bind="ctrl-d:execute(type=\$(echo {} | cut -d'|' -f1); if [[ \"\$type\" == orphan:* ]]; then name=\${type#orphan:}; tmux kill-session -t \"\$name\" 2>/dev/null; elif [[ \"\$type\" == \"separator\" ]] || [[ \"\$type\" == \"header\" ]] || [[ \"\$type\" == \"create\" ]]; then :; else wt=\"\$type\"; current=\$(git rev-parse --show-toplevel); if [[ \"\$wt\" == \"\$current\" ]]; then echo -e '\n  \033[31m Cannot delete current worktree. Switch to another first.\033[0m\n'; sleep 2; else name=\$(basename \"\$wt\"); tmux kill-session -t \"\$name\" 2>/dev/null; git worktree remove \"\$wt\" 2>/dev/null || git worktree remove --force \"\$wt\"; fi; fi)+reload($reload_cmd)" \
   )
   
   local query=$(echo "$result" | sed -n '1p')
@@ -459,6 +481,67 @@ treemux_main() {
   # Skip separator and header lines
   local selected_type=$(echo "$selected" | cut -d'|' -f1)
   if [[ "$selected_type" == "separator" ]] || [[ "$selected_type" == "header" ]]; then
+    _treemux_return 0
+  fi
+  
+  # Handle "Create new worktree" option
+  if [[ "$selected_type" == "create" ]]; then
+    local green=$'\e[32m' dim=$'\e[90m' reset=$'\e[0m'
+    local new_name=$(echo "" | fzf \
+      --ansi \
+      --height=40% \
+      --layout=reverse \
+      --border=rounded \
+      --margin=1,2 \
+      --padding=1 \
+      --prompt="  name: " \
+      --pointer="" \
+      --print-query \
+      --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;32mCreate New Worktree\033[0m\n\n  \033[90mEnter a name for the new worktree + branch\033[0m\n  \033[90mPress enter to continue, esc to cancel\033[0m\n' \
+      --header-first \
+      --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#a6e3a1' \
+      --color='fg:#cdd6f4,header:#a6e3a1,info:#a6e3a1,pointer:#f5e0dc' \
+      --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#a6e3a1,hl+:#a6e3a1' \
+      --color='border:#a6e3a1' \
+      | head -1)
+    
+    [[ -z "$new_name" ]] && _treemux_return 0
+    
+    local default_branch=$(treemux_default_branch)
+    local branches=$(git branch --format='%(refname:short)' | grep -v '^\*')
+    local sorted_branches=$(echo "$default_branch"; echo "$branches" | grep -v "^${default_branch}$")
+    
+    local base_branch=$(echo "$sorted_branches" | fzf \
+      --ansi \
+      --height=50% \
+      --layout=reverse \
+      --border=rounded \
+      --margin=1,2 \
+      --padding=1 \
+      --prompt="   " \
+      --pointer="" \
+      --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;35mBase Branch\033[0m\n\n  \033[90mCreate worktree\033[0m \033[36m'$new_name$'\033[0m \033[90mfrom:\033[0m\n' \
+      --header-first \
+      --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
+      --color='fg:#cdd6f4,header:#cba6f7,info:#cba6f7,pointer:#f5e0dc' \
+      --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8' \
+      --color='border:#6c7086' \
+    )
+    
+    [[ -z "$base_branch" ]] && _treemux_return 0
+    
+    local new_path=$(treemux_get_worktree_path "$new_name")
+    echo ""
+    if git worktree add "$new_path" -b "$new_name" "$base_branch" 2>/dev/null; then
+      local session_name=$(treemux_get_session_name "$new_path")
+      tmux new-session -d -s "$session_name" -c "$new_path"
+      echo -e "  \033[32m\033[0m  Created \033[36m$new_name\033[0m from \033[33m$base_branch\033[0m"
+      echo ""
+      tmux switch-client -t "$session_name"
+    else
+      echo -e "  \033[31m\033[0m  Failed to create worktree '$new_name'"
+      echo ""
+    fi
     _treemux_return 0
   fi
   
@@ -573,51 +656,7 @@ treemux_main() {
     _treemux_return 0
   fi
   
-  if [[ -z "$selected" && -n "$query" ]]; then
-    local new_name=${query:-}
-    if [[ -z "$new_name" ]]; then
-      echo -e "\n  \033[31m Enter a name for the new worktree\033[0m\n"
-      _treemux_return 1
-    fi
-    
-    local default_branch=$(treemux_default_branch)
-    local branches=$(git branch --format='%(refname:short)' | grep -v '^\*')
-    local sorted_branches=$(echo "$default_branch"; echo "$branches" | grep -v "^${default_branch}$")
-    
-    local base_branch=$(echo "$sorted_branches" | fzf \
-      --ansi \
-      --height=50% \
-      --layout=reverse \
-      --border=rounded \
-      --margin=1,2 \
-      --padding=1 \
-      --prompt="   " \
-      --pointer="" \
-      --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;35mBase Branch\033[0m\n\n  \033[90mCreate worktree\033[0m \033[36m'$new_name$'\033[0m \033[90mfrom:\033[0m\n' \
-      --header-first \
-      --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
-      --color='fg:#cdd6f4,header:#cba6f7,info:#cba6f7,pointer:#f5e0dc' \
-      --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8' \
-      --color='border:#6c7086' \
-    )
-    
-    [[ -z "$base_branch" ]] && _treemux_return 0
-    
-    local new_path=$(treemux_get_worktree_path "$new_name")
-    echo ""
-    if git worktree add "$new_path" -b "$new_name" "$base_branch" 2>/dev/null; then
-      local session_name=$(treemux_get_session_name "$new_path")
-      tmux new-session -d -s "$session_name" -c "$new_path"
-      echo -e "  \033[32m\033[0m  Created \033[36m$new_name\033[0m from \033[33m$base_branch\033[0m"
-      echo ""
-      local wt_path="$new_path"
-      local name="$session_name"
-    else
-      echo -e "  \033[31m\033[0m  Failed to create worktree '$new_name'"
-      echo ""
-      _treemux_return 1
-    fi
-  elif [[ "$key" == "tab" ]]; then
+  if [[ "$key" == "tab" ]]; then
     local wt_path=$(echo "$selected" | cut -d'|' -f1)
     local name=${wt_path:t}
     local has_session=$(tmux has-session -t "$name" 2>/dev/null && echo "1")
