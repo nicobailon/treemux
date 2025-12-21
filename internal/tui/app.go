@@ -301,6 +301,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = nil
 		}
 		switch msg.action {
+		case "jump":
+			if msg.err == nil {
+				return m, tea.Quit
+			}
 		case "create", "delete", "kill-session", "adopt":
 			m.state = stateMain
 			return m, loadDataCmd(m.svc)
