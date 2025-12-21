@@ -479,6 +479,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			if m.state == stateMain {
+				return m, tea.Quit
+			}
 		case "?":
 			if m.state == stateHelp {
 				m.state = stateMain
@@ -845,8 +849,7 @@ func renderHelp() string {
 		"",
 		sectionTitle("Other"),
 		helpLine("?", "toggle this help"),
-		helpLine("esc", "back / cancel"),
-		helpLine("q", "quit"),
+		helpLine("esc / q", "quit (back in dialogs)"),
 	}, "\n")
 	return modalStyle.Render(content)
 }
