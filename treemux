@@ -467,10 +467,11 @@ treemux_main() {
       proc_warning=$'\n  \033[90mRunning: '$procs$'\033[0m'
     fi
     
+    local green=$'\e[32m' red=$'\e[31m' dim=$'\e[90m' reset=$'\e[0m'
     local action=$(printf "%s\n" \
-      "adopt|  \033[32m Adopt\033[0m \033[90m(create worktree)\033[0m" \
-      "kill|  \033[31m Kill session\033[0m" \
-      "back|  \033[90m Back\033[0m" \
+      "adopt|  ${green} Adopt${reset} ${dim}(create worktree)${reset}" \
+      "kill|  ${red} Kill session${reset}" \
+      "back|  ${dim} Back${reset}" \
       | fzf --ansi --with-nth=2.. --delimiter='|' \
         --height=35% --layout=reverse --border=rounded \
         --margin=1,2 --padding=1 \
@@ -531,8 +532,8 @@ treemux_main() {
         fi
         
         local confirm=$(printf "%s\n" \
-          "yes|  \033[31m Yes, kill session\033[0m" \
-          "no|  \033[90m Cancel\033[0m" \
+          "yes|  ${red} Yes, kill session${reset}" \
+          "no|  ${dim} Cancel${reset}" \
           | fzf --ansi --with-nth=2.. --delimiter='|' \
             --height=30% --layout=reverse --border=rounded \
             --margin=1,2 --padding=1 \
@@ -605,10 +606,11 @@ treemux_main() {
     local wt_path=$(echo "$selected" | cut -d'|' -f1)
     local name=${wt_path:t}
     
+    local green=$'\e[32m' red=$'\e[31m' dim=$'\e[90m' reset=$'\e[0m'
     local action=$(printf "%s\n" \
-      "jump|  \033[32m Jump\033[0m" \
-      "delete|  \033[31m Delete\033[0m" \
-      "back|  \033[90m Back\033[0m" \
+      "jump|  ${green} Jump${reset}" \
+      "delete|  ${red} Delete${reset}" \
+      "back|  ${dim} Back${reset}" \
       | fzf --ansi --with-nth=2.. --delimiter='|' \
         --height=30% --layout=reverse --border=rounded \
         --margin=1,2 --padding=1 \
@@ -641,8 +643,8 @@ treemux_main() {
         fi
         
         local confirm=$(printf "%s\n" \
-          "yes|  \033[31m Yes, delete\033[0m" \
-          "no|  \033[90m Cancel\033[0m" \
+          "yes|  ${red} Yes, delete${reset}" \
+          "no|  ${dim} Cancel${reset}" \
           | fzf --ansi --with-nth=2.. --delimiter='|' \
             --height=30% --layout=reverse --border=rounded \
             --margin=1,2 --padding=1 \
