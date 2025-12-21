@@ -210,7 +210,7 @@ treemux_main() {
   # Add "Create new worktree" option at the top
   local green=$'\e[32m'
   local reset=$'\e[0m'
-  lines=("create|${green}+  Create new worktree...${reset}" "${lines[@]}")
+  lines=("create|  ${green}+  Create new worktree...${reset}" "${lines[@]}")
   
   # Find orphaned sessions (sessions without matching worktree)
   local sessions=("${(@f)$(tmux list-sessions -F '#{session_name}' 2>/dev/null)}")
@@ -238,7 +238,7 @@ treemux_main() {
     lines+=("header|     ${dim}ORPHANED SESSIONS ${red}(no worktree)${reset}")
     for session in "${orphaned_sessions[@]}"; do
       local padded_name=$(printf "%-30s" "$session")
-      lines+=("orphan:$session|${red}  ${reset}  ${red}${padded_name}${reset} ${dim} orphan${reset}")
+      lines+=("orphan:$session|     ${red}${padded_name}${reset} ${dim}orphan${reset}")
     done
   fi
   
@@ -400,7 +400,7 @@ treemux_main() {
   
   local reload_cmd='
     green=$'"'"'\e[32m'"'"'; reset=$'"'"'\e[0m'"'"'
-    echo "create|${green}+  Create new worktree...${reset}"
+    echo "create|  ${green}+  Create new worktree...${reset}"
     wt_names=()
     git worktree list | while read -r line; do
       wt_path=${line%% *}; branch=${line##*\[}; branch=${branch%]}; name=${wt_path:t}
@@ -426,7 +426,7 @@ treemux_main() {
       echo "header|     ${dim}ORPHANED SESSIONS ${red}(no worktree)${reset}"
       for session in "${orphans[@]}"; do
         padded_name=$(printf "%-30s" "$session")
-        echo "orphan:$session|${red}  ${reset}  ${red}${padded_name}${reset} ${dim} orphan${reset}"
+        echo "orphan:$session|     ${red}${padded_name}${reset} ${dim}orphan${reset}"
       done
     fi
   '
@@ -449,7 +449,7 @@ treemux_main() {
     --border=rounded \
     --margin=1,2 \
     --padding=1 \
-    --prompt="  filter: " \
+    --prompt="     / " \
     --pointer="" \
     --marker="" \
     --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;38;5;212mt\033[38;5;213mr\033[38;5;177me\033[38;5;141me\033[38;5;105mm\033[38;5;69mu\033[38;5;33mx\033[0m'"$welcome_msg"$'\n  \033[38;5;250mSelect + enter │ See preview for actions\033[0m\n  \033[38;5;103mtab\033[0m \033[38;5;250mmore\033[0m  \033[38;5;103mctrl-d\033[0m \033[38;5;250mdelete\033[0m  \033[38;5;103m?\033[0m \033[38;5;250mhelp\033[0m  \033[38;5;103mesc\033[0m \033[38;5;250mcancel\033[0m\n' \
