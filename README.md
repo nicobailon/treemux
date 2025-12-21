@@ -13,9 +13,38 @@
   <img src="treemux-screenshot.png" width="100%" />
 </p>
 
+## Install
+
+**Go (recommended):**
 ```bash
-treemux
+go install github.com/nicobailon/treemux/cmd/treemux@latest
 ```
+
+**Homebrew (coming soon):**
+```bash
+brew install nicobailon/tap/treemux
+```
+
+**From source:**
+```bash
+git clone https://github.com/nicobailon/treemux.git
+cd treemux
+go build -o treemux ./cmd/treemux
+mv treemux ~/.local/bin/
+```
+
+**Requirements:** git, tmux
+
+## Usage
+
+```bash
+treemux              # Open TUI
+treemux list         # List worktrees and sessions
+treemux clean        # Fix orphaned sessions/worktrees
+treemux --help       # Help
+```
+
+> **Tip:** Add `alias tx="treemux"` to your shell config
 
 ## The Problem
 
@@ -48,166 +77,87 @@ treemux treats worktree + session as **one unit**:
 
 This eliminates orphaned sessions, worktrees without a "home", and manual bookkeeping.
 
-## Quick Start
-
-### Requirements
-
-- zsh
-- tmux
-- fzf
-- git
-
-### Install
-
-```bash
-git clone https://github.com/nicobailon/treemux.git
-cd treemux
-./install.sh
-```
-
-Or manually:
-
-```bash
-cp treemux ~/.local/bin/
-chmod +x ~/.local/bin/treemux
-```
-
-### Use
-
-```bash
-treemux              # Open TUI
-treemux clean        # Fix orphaned sessions/worktrees
-treemux -l           # List worktrees
-treemux -h           # Help
-```
-
-> **Tip:** Add `alias tx="treemux"` to your `.zshrc`
-
-## Go Rewrite (in progress)
-
-The Go TUI implementation lives in `cmd/treemux`. Build or run directly during development:
-
-```bash
-go run ./cmd/treemux -l   # list view (no tmux bootstrap)
-go build ./cmd/treemux    # compile binary
-```
-
 ## Keybindings
 
 | Key | Action |
 |-----|--------|
-| `enter` | Jump to selected / Create new worktree / Manage orphan |
-| `tab` | Actions menu (Jump, Delete, Kill session) |
-| `ctrl-d` | Quick delete worktree + session |
+| `enter` | Jump to selected / Create new worktree |
+| `/` | Filter worktrees |
+| `tab` | Actions menu |
+| `ctrl+d` | Quick delete worktree + session |
 | `?` | Help |
-| `esc` | Cancel |
+| `q` / `esc` | Quit / Cancel |
 
 ## Interface
 
 ### Main View
 
-- **Worktrees** with status indicators:
-  - `●` purple dot = current worktree
-  - `no session` label = no active tmux session
-- **Orphaned Sessions** at bottom - sessions without matching worktrees
+- **Worktrees** with status indicators (green = clean, yellow = changes, purple = staged)
+- **Recent** - Jump to worktrees in other projects
+- **Orphaned Sessions** - Sessions without matching worktrees
 
 ### Preview Panel
 
-- Path to worktree
+- Path and branch info
 - Git status (staged, modified, untracked)
 - Ahead/behind upstream
-- Session info (windows, panes)
-- Running processes
+- Session info and running processes
 - Recent commits
-
-### Auto-Start
-
-Run `treemux` outside tmux and it automatically creates a session and attaches.
 
 ## Common Workflows
 
 ### Feature Development
 
 ```
-tx → select "+ Create new worktree" → enter
+treemux → "+ Create new worktree" → enter
 → type "feature-auth" → enter → select "main" → enter
-# You're in a fresh workspace branched from main
+# Fresh workspace branched from main
 ```
 
 ### Urgent Hotfix
 
 ```
-tx → create "hotfix-123" from main
+treemux → create "hotfix-123" from main
 # Fix the bug, push, then:
-tx → select your feature workspace → enter
+treemux → select your feature workspace → enter
 # Back to where you were, everything intact
 ```
 
-### Code Review
+### Jump Between Projects
 
-```
-tx → create "review-pr-456" from main
-git fetch origin pull/456/head:pr-456 && git checkout pr-456
-# Review, then delete when done:
-tx → select "review-pr-456" → ctrl-d → confirm
-```
+The **Recent** section shows worktrees from other repos. Select one to instantly switch projects without leaving treemux.
 
 ### Managing Orphans
 
 Orphaned sessions appear at the bottom. Select one to:
-
 - **Jump** - Inspect before deciding
 - **Adopt** - Create a worktree for the session
 - **Kill** - Terminate the session
 
 ## Configuration
 
-Create `~/.config/treemux/config`:
+Create `~/.config/treemux/config.yaml`:
 
-```bash
-# Default branch for new worktrees (default: auto-detect)
-TREEMUX_BASE_BRANCH="main"
-
-# Where to create worktrees: sibling (default) or subdirectory
-#   sibling:      ~/dev/myrepo-feature (next to repo)
-#   subdirectory: ~/dev/myrepo/.worktrees/feature (inside repo)
-TREEMUX_PATH_PATTERN="sibling"
-
-# Session naming: folder (default) or branch
-TREEMUX_SESSION_NAME="folder"
+```yaml
+base_branch: main
+path_pattern: sibling    # or "subdirectory"
+session_name: folder     # or "branch"
 ```
 
-## Gotchas & Limitations
+**Path patterns:**
+- `sibling`: `~/dev/myrepo-feature` (next to repo)
+- `subdirectory`: `~/dev/myrepo/.worktrees/feature` (inside repo)
 
-### Git Limitations
+## Limitations
 
-- **Same branch, multiple worktrees**: Git doesn't allow the same branch checked out in multiple worktrees
-
-### Disk Space
-
-- Each worktree is a full file checkout
-- Each needs its own `node_modules`, build artifacts, etc.
-
-### Outside treemux
-
-- Worktrees created via `git worktree add` won't have sessions (created on first jump)
-- Sessions killed manually leave worktrees intact (shown as "no session")
-- Worktrees deleted manually leave sessions orphaned (shown in orphaned section)
-
-### IDE Integration
-
-- JetBrains and VS Code handle worktrees well
-- Some IDEs get confused - check your IDE's worktree support
-
-## Contributing
-
-Contributions welcome! Please read the [contributing guidelines](CONTRIBUTING.md) first.
+- **Same branch, multiple worktrees**: Git doesn't allow this
+- **Disk space**: Each worktree needs its own `node_modules`, build artifacts, etc.
+- **External changes**: Worktrees/sessions created outside treemux sync on next launch
 
 ## Related
 
-- [fzf](https://github.com/junegunn/fzf) - Powers the interactive TUI
 - [tmux](https://github.com/tmux/tmux) - Terminal multiplexer
-- [git-worktree](https://git-scm.com/docs/git-worktree) - Git's worktree documentation
+- [git-worktree](https://git-scm.com/docs/git-worktree) - Git worktree documentation
 
 ## Inspiration
 
