@@ -25,9 +25,9 @@ func ScanForRepos(searchPaths []string) []string {
 
 	for _, searchPath := range searchPaths {
 		expanded := os.ExpandEnv(searchPath)
-		if strings.HasPrefix(expanded, "~") {
+		if strings.HasPrefix(expanded, "~/") {
 			home, _ := os.UserHomeDir()
-			expanded = filepath.Join(home, expanded[1:])
+			expanded = filepath.Join(home, expanded[2:])
 		}
 
 		entries, err := os.ReadDir(expanded)

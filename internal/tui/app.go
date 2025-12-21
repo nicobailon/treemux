@@ -273,6 +273,13 @@ func killSessionCmd(svc *workspace.Service, name string) tea.Cmd {
 	}
 }
 
+func killSessionDirectCmd(t *tmux.Tmux, name string) tea.Cmd {
+	return func() tea.Msg {
+		err := t.KillSession(name)
+		return resultMsg{action: "kill-session", err: err}
+	}
+}
+
 type jumpMsg struct {
 	sessionName string
 	path        string
@@ -384,6 +391,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.action {
 		case "create", "delete", "kill-session", "adopt":
 			m.state = stateMain
+			if m.globalMode {
+				return m, loadGlobalDataCmd(m.cfg, m.tmux)
+			}
 			return m, loadDataCmd(m.svc)
 		}
 		return m, nil
@@ -499,6 +509,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, killSessionCmd(m.svc, m.pendingWT.SessionName)
 					}
 					if m.pending != "" {
+						if m.globalMode {
+							return m, killSessionDirectCmd(m.tmux, m.pending)
+						}
 						return m, killSessionCmd(m.svc, m.pending)
 					}
 				case strings.Contains(title, "Adopt"):
@@ -574,6 +587,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sel, ok := m.list.SelectedItem().(listItem); ok {
 				switch sel.kind {
 				case kindCreate:
+					if m.globalMode {
+						return m, nil
+					}
 					m.state = stateCreateName
 					m.input.SetValue("")
 					m.input.Focus()
@@ -585,7 +601,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.state = stateActionMenu
 				case kindOrphan:
 					m.pending = sel.title
-					m.menu.SetItems(orphanMenuItems())
+					if m.globalMode {
+						m.menu.SetItems(globalOrphanMenuItems())
+					} else {
+						m.menu.SetItems(orphanMenuItems())
+					}
 					m.menu.Select(0)
 					m.state = stateOrphanMenu
 				case kindRecent:
@@ -642,7 +662,7 @@ func (m *model) skipNonSelectable(direction int) {
 		if !ok {
 			break
 		}
-		if item.kind != kindSeparator && item.kind != kindHeader {
+		if item.kind != kindSeparator && item.kind != kindHeader && item.kind != kindRepoHeader {
 			break
 		}
 		idx += direction
@@ -1075,6 +1095,13 @@ func orphanMenuItems() []list.Item {
 func globalActionMenuItems() []list.Item {
 	return []list.Item{
 		listItem{title: iconJump + "  Jump", desc: "Switch to session", kind: kindHeader},
+	}
+}
+
+func globalOrphanMenuItems() []list.Item {
+	return []list.Item{
+		listItem{title: iconJump + "  Jump", desc: "Switch to session", kind: kindHeader},
+		listItem{title: iconKill + "  Kill session", desc: "Kill orphaned session", kind: kindHeader},
 	}
 }
 
