@@ -15,14 +15,27 @@
 
 ## Install
 
-**Go (recommended):**
+**Download binary:**
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/nicobailon/treemux/releases).
+
 ```bash
-go install github.com/nicobailon/treemux/cmd/treemux@latest
+# macOS (Apple Silicon)
+curl -L https://github.com/nicobailon/treemux/releases/latest/download/treemux_darwin_arm64.tar.gz | tar xz
+mv treemux /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/nicobailon/treemux/releases/latest/download/treemux_darwin_amd64.tar.gz | tar xz
+mv treemux /usr/local/bin/
+
+# Linux (amd64)
+curl -L https://github.com/nicobailon/treemux/releases/latest/download/treemux_linux_amd64.tar.gz | tar xz
+mv treemux /usr/local/bin/
 ```
 
-**Homebrew (coming soon):**
+**Go install:**
 ```bash
-brew install nicobailon/tap/treemux
+go install github.com/nicobailon/treemux/cmd/treemux@latest
 ```
 
 **From source:**

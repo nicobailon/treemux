@@ -476,6 +476,21 @@ body {
   color: var(--text);
 }
 
+.install__alt {
+  margin-top: 16px;
+  color: var(--subtext);
+  font-size: 14px;
+}
+
+.install__alt a {
+  color: var(--mauve);
+  text-decoration: none;
+}
+
+.install__alt a:hover {
+  text-decoration: underline;
+}
+
 /* Features */
 .features {
   display: grid;
