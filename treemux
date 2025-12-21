@@ -111,7 +111,7 @@ treemux_clean() {
     --padding=1 \
     --prompt="  " \
     --pointer="" \
-    --marker="✓" \
+    --marker="*" \
     --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;38;5;212mt\033[38;5;213mr\033[38;5;177me\033[38;5;141me\033[38;5;105mm\033[38;5;69mu\033[38;5;33mx\033[0m \033[90mclean\033[0m\n\n  \033[38;5;250mSelect items to clean up (TAB to multi-select, ENTER to confirm)\033[0m\n  \033[38;5;103mtab\033[0m \033[38;5;250mselect\033[0m  \033[38;5;103menter\033[0m \033[38;5;250mconfirm\033[0m  \033[38;5;103mesc\033[0m \033[38;5;250mcancel\033[0m\n' \
     --header-first \
     --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
