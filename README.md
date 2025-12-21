@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="treemux-banner.jpg" width="100%" />
+</p>
+
 # treemux
 
 **Git worktrees + tmux sessions as one unit. Switch branches without losing your terminal state.**
