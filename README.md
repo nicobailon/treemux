@@ -60,16 +60,16 @@ This pairing eliminates an entire class of problems:
 Stop thinking about branches, worktrees, and sessions separately. Think in **workspaces**:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ WORKSPACE: "feature-auth"                                   │
-├─────────────────────────────────────────────────────────────┤
-│ 📁 ~/dev/myapp-feature-auth    (worktree)                  │
-│ 🌿 feature-auth                 (branch)                    │
-│ 🖥️  feature-auth                 (tmux session)             │
-│    └─ npm run dev (running)                                 │
-│    └─ vim src/auth.ts (open)                                │
-│    └─ terminal history preserved                            │
-└─────────────────────────────────────────────────────────────┘
++-------------------------------------------------------------+
+| WORKSPACE: "feature-auth"                                   |
++-------------------------------------------------------------+
+| ~/dev/myapp-feature-auth    (worktree)                      |
+| feature-auth                (branch)                        |
+| feature-auth                (tmux session)                  |
+|    - npm run dev (running)                                  |
+|    - vim src/auth.ts (open)                                 |
+|    - terminal history preserved                             |
++-------------------------------------------------------------+
 ```
 
 With treemux, you manage workspaces, not their components.
@@ -110,15 +110,41 @@ treemux clean        # Find and fix orphaned sessions/worktrees
 treemux -h           # Help
 ```
 
+### Auto-Start Tmux
+
+If you run `treemux` outside of tmux, it automatically:
+1. Creates a tmux session named after your current folder
+2. Launches treemux inside that session
+3. Attaches you to the session
+
+No more "treemux requires tmux" errors - it just works.
+
 ### Keybindings
 
 | Key | Action |
 |-----|--------|
-| `enter` | Jump to selected / Create new worktree |
-| `tab` | Actions menu |
-| `ctrl-d` | Delete worktree + session |
+| `enter` | Jump to selected / Create new worktree / Manage orphan |
+| `tab` | Actions menu (Jump, Delete, Back) |
+| `ctrl-d` | Quick delete worktree + session |
 | `?` | Help |
 | `esc` | Cancel |
+
+### The Interface
+
+The main view shows:
+- **Worktrees** with status indicators:
+  - `●` purple dot = current worktree (you are here)
+  - Green icon = tmux session is active
+  - Gray icon = no active session
+- **Orphaned Sessions** (if any) - sessions without matching worktrees
+
+The **preview panel** shows:
+- Path to the worktree
+- Git status (clean, modified, staged, untracked)
+- Ahead/behind upstream
+- Session info (windows, panes)
+- Running processes in the session
+- Recent commits
 
 ### Creating a Workspace
 
@@ -143,21 +169,20 @@ Instant switch. Your other workspace keeps running in the background.
 1. Run `treemux`
 2. Select the workspace to delete
 3. Press `ctrl-d` or `tab` → Delete
-4. Confirm
+4. See running processes that will be terminated
+5. Confirm
 
 Both the worktree and its tmux session are removed.
 
-### Cleaning Up Orphans
+### Managing Orphaned Sessions
 
-Over time, you might end up with:
-- Tmux sessions without a corresponding worktree (deleted worktree outside treemux)
-- Worktrees without a corresponding tmux session (created outside treemux)
+Orphaned sessions (tmux sessions without matching worktrees) appear at the bottom of the list. Select one and press `enter` to:
 
-```bash
-treemux clean
-```
+- **Adopt** - Create a worktree for this session, linking them together
+- **Kill** - Terminate the session (shows running processes first)
+- **Back** - Return to main view
 
-This finds and offers to fix orphaned sessions and worktrees.
+This lets you either clean up stale sessions or "rescue" them by creating a matching worktree.
 
 ---
 
@@ -216,6 +241,14 @@ git checkout pr-456
 tx → select "review-pr-456" → ctrl-d → confirm
 ```
 
+### Adopting an Orphan
+```
+# You have a tmux session "experiment" but deleted its worktree
+tx → select "experiment" (in orphaned section) → enter
+# Choose "Adopt" → select base branch → enter
+# Now you have a fresh worktree linked to your existing session
+```
+
 ---
 
 ## Gotchas & Limitations
@@ -230,12 +263,21 @@ tx → select "review-pr-456" → ctrl-d → confirm
 
 ### Outside Treemux
 - Worktrees created via `git worktree add` won't have sessions (treemux creates one on first jump)
-- Sessions killed manually leave worktrees intact (use `treemux clean`)
-- Worktrees deleted manually leave sessions orphaned (use `treemux clean`)
+- Sessions killed manually leave worktrees intact (shown as "no session" indicator)
+- Worktrees deleted manually leave sessions orphaned (shown in orphaned section)
 
 ### IDE Integration
 - Some IDEs handle worktrees well (JetBrains, VS Code)
 - Some get confused - check your IDE's worktree support
+
+---
+
+## Built With
+
+- **fzf** - Powers the interactive TUI
+- **tmux** - Session management
+- **git worktrees** - File isolation
+- **zsh** - Shell scripting
 
 ---
 
