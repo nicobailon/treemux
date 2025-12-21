@@ -449,8 +449,7 @@ treemux_main() {
     --border=rounded \
     --margin=1,2 \
     --padding=1 \
-    --no-info \
-    --prompt="" \
+    --prompt="  filter: " \
     --pointer="" \
     --marker="" \
     --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;38;5;212mt\033[38;5;213mr\033[38;5;177me\033[38;5;141me\033[38;5;105mm\033[38;5;69mu\033[38;5;33mx\033[0m'"$welcome_msg"$'\n  \033[38;5;250mSelect + enter │ See preview for actions\033[0m\n  \033[38;5;103mtab\033[0m \033[38;5;250mmore\033[0m  \033[38;5;103mctrl-d\033[0m \033[38;5;250mdelete\033[0m  \033[38;5;103m?\033[0m \033[38;5;250mhelp\033[0m  \033[38;5;103mesc\033[0m \033[38;5;250mcancel\033[0m\n' \
