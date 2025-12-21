@@ -10,9 +10,7 @@
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-blue?style=for-the-badge)]()
 
 <p align="center">
-  <img src="screen1.png" width="32%" />
-  <img src="screen2.png" width="32%" />
-  <img src="screen3.png" width="32%" />
+  <img src="treemux-screenshot.png" width="100%" />
 </p>
 
 ```bash
@@ -84,6 +82,15 @@ treemux -h           # Help
 ```
 
 > **Tip:** Add `alias tx="treemux"` to your `.zshrc`
+
+## Go Rewrite (in progress)
+
+The Go TUI implementation lives in `cmd/treemux`. Build or run directly during development:
+
+```bash
+go run ./cmd/treemux -l   # list view (no tmux bootstrap)
+go build ./cmd/treemux    # compile binary
+```
 
 ## Keybindings
 
@@ -201,6 +208,10 @@ Contributions welcome! Please read the [contributing guidelines](CONTRIBUTING.md
 - [fzf](https://github.com/junegunn/fzf) - Powers the interactive TUI
 - [tmux](https://github.com/tmux/tmux) - Terminal multiplexer
 - [git-worktree](https://git-scm.com/docs/git-worktree) - Git's worktree documentation
+
+## Inspiration
+
+treemux builds on the **sessionizer** pattern popularized by [ThePrimeagen](https://github.com/ThePrimeagen). His tmux-sessionizer script pioneered the idea of project-based tmux sessions with fuzzy finding. treemux extends this concept specifically for git worktrees, adding the worktree + session pairing, orphan management, and a richer TUI.
 
 ## License
 

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>treemux — git worktrees + tmux sessions</title>
+    <meta name="description" content="Pair git worktrees with tmux sessions. Jump between workspaces instantly." />
+    <link rel="canonical" href="https://treemux.com/" />
+    <meta property="og:title" content="treemux" />
+    <meta property="og:description" content="git worktrees + tmux sessions. Jump between workspaces instantly." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://treemux.com/" />
+    <meta property="og:image" content="https://treemux.com/assets/og-image.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://treemux.com/assets/og-image.jpg" />
+    <meta name="theme-color" content="#1e1e2e" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./assets/site.css" />
+  </head>
+  <body>
+    <div class="glow glow--1"></div>
+    <div class="glow glow--2"></div>
+    
+    <main class="shell">
+      <header class="top">
+        <a class="brand" href="./index.html" aria-label="treemux home">
+          <span class="brand__icon">▲</span>
+          <span class="brand__text">treemux</span>
+        </a>
+        <nav class="nav">
+          <a href="https://github.com/nicobailon/treemux#installation">Install</a>
+          <a href="https://github.com/nicobailon/treemux" class="nav__github">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.77.6-3.35-1.18-3.35-1.18-.45-1.14-1.1-1.45-1.1-1.45-.9-.62.07-.6.07-.6 1 .07 1.52 1.02 1.52 1.02.9 1.52 2.36 1.08 2.94.82.09-.64.35-1.08.63-1.33-2.2-.25-4.52-1.1-4.52-4.88 0-1.08.39-1.96 1.02-2.65-.1-.25-.44-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.46 9.46 0 0 1 5 0c1.9-1.29 2.75-1.02 2.75-1.02.54 1.38.2 2.4.1 2.65.64.69 1.02 1.57 1.02 2.65 0 3.79-2.33 4.63-4.55 4.88.36.31.68.92.68 1.86v2.76c0 .26.18.58.69.48A10 10 0 0 0 12 2Z"/>
+            </svg>
+          </a>
+        </nav>
+      </header>
+
+      <section class="hero reveal">
+        <div class="hero__badge">Terminal UI</div>
+        <h1 class="hero__title">
+          <span class="hero__line">Worktrees</span>
+          <span class="hero__plus">+</span>
+          <span class="hero__line">Sessions</span>
+        </h1>
+        <p class="hero__sub">Pair git worktrees with tmux sessions.<br/>Create, jump, delete — all from one beautiful TUI.</p>
+        
+        <div class="hero__cta">
+          <a href="https://github.com/nicobailon/treemux#installation" class="btn btn--primary">
+            Get Started
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </a>
+          <a href="https://github.com/nicobailon/treemux" class="btn">View Source</a>
+        </div>
+      </section>
+
+      <section class="terminal-preview reveal">
+        <div class="terminal">
+          <div class="terminal__bar">
+            <span class="terminal__dot terminal__dot--red"></span>
+            <span class="terminal__dot terminal__dot--yellow"></span>
+            <span class="terminal__dot terminal__dot--green"></span>
+            <span class="terminal__title">treemux</span>
+          </div>
+          <div class="terminal__body">
+            <div class="tui">
+              <div class="tui__header">
+                <span class="tui__logo">▲</span>
+                <span class="tui__name">treemux</span>
+                <span class="tui__dim">git worktrees + tmux sessions</span>
+              </div>
+              <div class="tui__content">
+                <div class="tui__list">
+                  <div class="tui__item tui__item--selected">
+                    <span class="tui__dot tui__dot--green"></span>
+                    <span>+ Create new worktree ...</span>
+                  </div>
+                  <div class="tui__item">
+                    <span class="tui__dot tui__dot--green"></span>
+                    <span>my-app</span>
+                    <span class="tui__branch">main</span>
+                    <span class="tui__session">●</span>
+                  </div>
+                  <div class="tui__item">
+                    <span class="tui__dot tui__dot--yellow"></span>
+                    <span>feature-auth</span>
+                    <span class="tui__branch">feature/auth</span>
+                    <span class="tui__session">●</span>
+                  </div>
+                  <div class="tui__item">
+                    <span class="tui__dot tui__dot--green"></span>
+                    <span>hotfix-123</span>
+                    <span class="tui__branch">hotfix/123</span>
+                  </div>
+                  <div class="tui__separator"></div>
+                  <div class="tui__item tui__item--orphan">
+                    <span>ORPHANED SESSIONS</span>
+                  </div>
+                  <div class="tui__item">
+                    <span class="tui__dot tui__dot--dim"></span>
+                    <span class="tui__orphan-name">old-experiment</span>
+                    <span class="tui__orphan-label">orphan</span>
+                  </div>
+                </div>
+                <div class="tui__preview">
+                  <div class="tui__section">Create New Worktree</div>
+                  <div class="tui__preview-text">This will:</div>
+                  <div class="tui__step"><span>1.</span> Create a git branch</div>
+                  <div class="tui__step"><span>2.</span> Create a worktree</div>
+                  <div class="tui__step"><span>3.</span> Start a tmux session</div>
+                  <div class="tui__step"><span>4.</span> Switch to session</div>
+                </div>
+              </div>
+              <div class="tui__footer">
+                <span><kbd>enter</kbd> select</span>
+                <span><kbd>/</kbd> filter</span>
+                <span><kbd>tab</kbd> menu</span>
+                <span><kbd>?</kbd> help</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="install reveal">
+        <div class="install__card">
+          <div class="install__code">
+            <code id="install-cmd">go install github.com/nicobailon/treemux@latest</code>
+          </div>
+          <button class="install__copy" data-copy="#install-cmd">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            <span>Copy</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="features">
+        <div class="feature reveal">
+          <div class="feature__icon">⚡</div>
+          <h3>Instant Context Switch</h3>
+          <p>Each worktree gets its own tmux session. Jump between features, fixes, and experiments without losing state.</p>
+        </div>
+        <div class="feature reveal">
+          <div class="feature__icon">👻</div>
+          <h3>Orphan Detection</h3>
+          <p>Find tmux sessions without matching worktrees. Adopt them, jump to them, or clean them up.</p>
+        </div>
+        <div class="feature reveal">
+          <div class="feature__icon">🔍</div>
+          <h3>Rich Preview</h3>
+          <p>See git status, running processes, recent commits, and session info before you jump.</p>
+        </div>
+        <div class="feature reveal">
+          <div class="feature__icon">⌨️</div>
+          <h3>Keyboard First</h3>
+          <p>Fuzzy filter with <kbd>/</kbd>, quick delete with <kbd>ctrl+d</kbd>, full control without touching the mouse.</p>
+        </div>
+      </section>
+
+      <section class="flow reveal">
+        <h2 class="flow__title">The Workflow</h2>
+        <div class="flow__steps">
+          <div class="flow__step">
+            <div class="flow__num">1</div>
+            <div class="flow__text">Create worktree + session</div>
+          </div>
+          <div class="flow__arrow">→</div>
+          <div class="flow__step">
+            <div class="flow__num">2</div>
+            <div class="flow__text">Work, commit, detach</div>
+          </div>
+          <div class="flow__arrow">→</div>
+          <div class="flow__step">
+            <div class="flow__num">3</div>
+            <div class="flow__text">Jump back anytime</div>
+          </div>
+          <div class="flow__arrow">→</div>
+          <div class="flow__step">
+            <div class="flow__num">4</div>
+            <div class="flow__text">Delete when done</div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <span>Built by <a href="https://github.com/nicobailon">@nicobailon</a></span>
+        <span>Catppuccin Mocha theme</span>
+      </footer>
+    </main>
+
+    <script type="module" src="./assets/site.js"></script>
+  </body>
+</html>

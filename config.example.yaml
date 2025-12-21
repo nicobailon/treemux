@@ -1,0 +1,11 @@
+# Default branch for new worktrees (auto-detects origin/HEAD if empty)
+base_branch: main
+
+# Worktree placement: sibling|subdirectory
+path_pattern: sibling
+
+# Session naming: folder|branch
+session_name: folder
+
+# Theme name (future extensibility)
+theme: catppuccin-mocha
