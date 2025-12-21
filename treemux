@@ -678,7 +678,7 @@ treemux_main() {
     local name=${wt_path:t}
   fi
   
-  if [[ "$PWD" == "$wt_path"* ]]; then
+  if [[ "$PWD" == "$wt_path" ]] || [[ "$PWD" == "$wt_path"/* ]]; then
     echo -e "\n  \033[90m Already in \033[36m$name\033[0m\n"
     _treemux_return 0
   fi
