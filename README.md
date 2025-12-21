@@ -167,6 +167,40 @@ session_name: folder     # or "branch"
 - **Disk space**: Each worktree needs its own `node_modules`, build artifacts, etc.
 - **External changes**: Worktrees/sessions created outside treemux sync on next launch
 
+## Development
+
+**Build from source:**
+```bash
+git clone https://github.com/nicobailon/treemux.git
+cd treemux
+go build -o treemux ./cmd/treemux
+```
+
+**Run during development:**
+```bash
+alias tx="~/path/to/treemux/treemux"
+# Rebuild after changes:
+go build -o treemux ./cmd/treemux
+```
+
+### Releasing
+
+Two ways to create a release:
+
+**Option 1: Git tag**
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+**Option 2: Manual trigger (GitHub UI)**
+1. Go to [Actions](https://github.com/nicobailon/treemux/actions) → **Release** workflow
+2. Click **"Run workflow"**
+3. Enter version (e.g., `v1.0.0-beta2`)
+4. Click **"Run workflow"**
+
+Both methods trigger GoReleaser to build binaries for macOS/Linux and attach them to the release.
+
 ## Related
 
 - [tmux](https://github.com/tmux/tmux) - Terminal multiplexer
