@@ -234,11 +234,11 @@ treemux_main() {
     local dim=$'\e[90m'
     local red=$'\e[31m'
     local reset=$'\e[0m'
-    lines+=("separator|     ${dim}────────────────────────────────────────────────────${reset}")
-    lines+=("header|     ${dim}ORPHANED SESSIONS ${red}(no worktree)${reset}")
+    lines+=("separator|       ${dim}─────────────────────────────────────────────────${reset}")
+    lines+=("header|       ${dim}ORPHANED SESSIONS ${red}(no worktree)${reset}")
     for session in "${orphaned_sessions[@]}"; do
       local padded_name=$(printf "%-30s" "$session")
-      lines+=("orphan:$session|     ${red}${padded_name}${reset} ${dim}orphan${reset}")
+      lines+=("orphan:$session|       ${red}${padded_name}${reset} ${dim}orphan${reset}")
     done
   fi
   
@@ -422,11 +422,11 @@ treemux_main() {
     done
     if [[ ${#orphans[@]} -gt 0 ]]; then
       dim=$'"'"'\e[90m'"'"'; red=$'"'"'\e[31m'"'"'; reset=$'"'"'\e[0m'"'"'
-      echo "separator|     ${dim}────────────────────────────────────────────────────${reset}"
-      echo "header|     ${dim}ORPHANED SESSIONS ${red}(no worktree)${reset}"
+      echo "separator|       ${dim}─────────────────────────────────────────────────${reset}"
+      echo "header|       ${dim}ORPHANED SESSIONS ${red}(no worktree)${reset}"
       for session in "${orphans[@]}"; do
         padded_name=$(printf "%-30s" "$session")
-        echo "orphan:$session|     ${red}${padded_name}${reset} ${dim}orphan${reset}"
+        echo "orphan:$session|       ${red}${padded_name}${reset} ${dim}orphan${reset}"
       done
     fi
   '
