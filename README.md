@@ -35,31 +35,39 @@ Each switch costs 5-10 minutes reconstructing your environment.
 
 ## The Solution
 
-**treemux** pairs git worktrees with tmux sessions. Each workspace is completely isolated:
+**Git worktrees** solve file isolation - each worktree is a separate directory with its own branch. But files are only half the story.
 
-| Before | After |
-|--------|-------|
-| One directory, constant stashing | Separate directories per branch |
-| Kill dev server to switch | Dev servers keep running |
-| Lose terminal history | History preserved per workspace |
-| Manual session management | Automatic pairing |
+**Tmux sessions** solve environment isolation - terminal history, running processes, pane layouts. Your dev server keeps running.
 
-```bash
-# Create workspace "feature-auth" branched from main
-treemux → type "feature-auth" → enter → select "main" → enter
+**Together**, they create complete workspace isolation:
 
-# Switch to another workspace (instant, everything preserved)
-treemux → select workspace → enter
+| Layer | Worktree | Tmux Session |
+|-------|----------|--------------|
+| Files | Separate working directory | - |
+| Branch | Independent git state | - |
+| Processes | - | Persistent dev servers, watchers |
+| Terminal | - | Command history, scroll buffer |
+| Layout | - | Pane arrangements |
 
-# Delete workspace (worktree + session together)
-treemux → select → ctrl-d → confirm
-```
+### Why Keep Them Paired?
+
+treemux treats worktree + session as **one unit**:
+
+1. **Create together** - New worktree automatically gets a dedicated session
+2. **Switch together** - Jump to a worktree = switch to its session
+3. **Delete together** - Remove worktree = kill its session
+4. **Name together** - Session named after worktree folder
+
+This eliminates orphaned sessions, worktrees without a "home", and manual bookkeeping.
 
 ## Quick Start
 
 ### Requirements
 
-- zsh, tmux, fzf, git
+- zsh
+- tmux
+- fzf
+- git
 
 ### Install
 
@@ -69,12 +77,20 @@ cd treemux
 ./install.sh
 ```
 
+Or manually:
+
+```bash
+cp treemux ~/.local/bin/
+chmod +x ~/.local/bin/treemux
+```
+
 ### Use
 
 ```bash
 treemux              # Open TUI
 treemux clean        # Fix orphaned sessions/worktrees
 treemux -l           # List worktrees
+treemux -h           # Help
 ```
 
 > **Tip:** Add `alias tx="treemux"` to your `.zshrc`
@@ -83,30 +99,69 @@ treemux -l           # List worktrees
 
 | Key | Action |
 |-----|--------|
-| `enter` | Jump / Create / Manage orphan |
-| `tab` | Actions menu |
-| `ctrl-d` | Quick delete |
+| `enter` | Jump to selected / Create new worktree / Manage orphan |
+| `tab` | Actions menu (Jump, Delete, Kill session) |
+| `ctrl-d` | Quick delete worktree + session |
 | `?` | Help |
 | `esc` | Cancel |
 
-## Features
+## Interface
 
-### Unified View
+### Main View
 
-- **Worktrees** with status: `●` current, green = session active, gray = no session
-- **Orphaned sessions** at bottom (sessions without worktrees)
-- **Preview panel** shows git status, running processes, recent commits
+- **Worktrees** with status indicators:
+  - `●` purple dot = current worktree
+  - `no session` label = no active tmux session
+- **Orphaned Sessions** at bottom - sessions without matching worktrees
+
+### Preview Panel
+
+- Path to worktree
+- Git status (staged, modified, untracked)
+- Ahead/behind upstream
+- Session info (windows, panes)
+- Running processes
+- Recent commits
 
 ### Auto-Start
 
 Run `treemux` outside tmux and it automatically creates a session and attaches.
 
-### Orphan Management
+## Common Workflows
 
-Sessions without worktrees can be:
-- **Adopted** - Create a worktree for the session
-- **Jumped to** - Inspect before deciding
-- **Killed** - Remove the session
+### Feature Development
+
+```
+tx → select "+ Create new worktree" → enter
+→ type "feature-auth" → enter → select "main" → enter
+# You're in a fresh workspace branched from main
+```
+
+### Urgent Hotfix
+
+```
+tx → create "hotfix-123" from main
+# Fix the bug, push, then:
+tx → select your feature workspace → enter
+# Back to where you were, everything intact
+```
+
+### Code Review
+
+```
+tx → create "review-pr-456" from main
+git fetch origin pull/456/head:pr-456 && git checkout pr-456
+# Review, then delete when done:
+tx → select "review-pr-456" → ctrl-d → confirm
+```
+
+### Managing Orphans
+
+Orphaned sessions appear at the bottom. Select one to:
+
+- **Jump** - Inspect before deciding
+- **Adopt** - Create a worktree for the session
+- **Kill** - Terminate the session
 
 ## Configuration
 
@@ -117,30 +172,35 @@ Create `~/.config/treemux/config`:
 TREEMUX_BASE_BRANCH="main"
 
 # Where to create worktrees: sibling (default) or subdirectory
+#   sibling:      ~/dev/myrepo-feature (next to repo)
+#   subdirectory: ~/dev/myrepo/.worktrees/feature (inside repo)
 TREEMUX_PATH_PATTERN="sibling"
 
 # Session naming: folder (default) or branch
 TREEMUX_SESSION_NAME="folder"
 ```
 
-## How It Works
+## Gotchas & Limitations
 
-treemux treats worktree + session as **one workspace**:
+### Git Limitations
 
-```
-┌─────────────────────────────────────────────┐
-│ WORKSPACE: "feature-auth"                   │
-├─────────────────────────────────────────────┤
-│ ~/dev/myapp-feature-auth    (worktree)      │
-│ feature-auth                (branch)        │
-│ feature-auth                (tmux session)  │
-│    └─ npm run dev (running)                 │
-│    └─ vim src/auth.ts (open)                │
-│    └─ terminal history preserved            │
-└─────────────────────────────────────────────┘
-```
+- **Same branch, multiple worktrees**: Git doesn't allow the same branch checked out in multiple worktrees
 
-Create together, switch together, delete together. No orphans, no manual bookkeeping.
+### Disk Space
+
+- Each worktree is a full file checkout
+- Each needs its own `node_modules`, build artifacts, etc.
+
+### Outside treemux
+
+- Worktrees created via `git worktree add` won't have sessions (created on first jump)
+- Sessions killed manually leave worktrees intact (shown as "no session")
+- Worktrees deleted manually leave sessions orphaned (shown in orphaned section)
+
+### IDE Integration
+
+- JetBrains and VS Code handle worktrees well
+- Some IDEs get confused - check your IDE's worktree support
 
 ## License
 
