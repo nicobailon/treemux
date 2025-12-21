@@ -484,7 +484,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.input.Focus()
 				case kindWorktree:
 					wt := sel.data.(workspace.WorktreeState)
-					cmds = append(cmds, jumpCmd(m.svc, wt.Worktree.Name, wt.Worktree.Path, m.recentStore))
+					m.pendingWT = &wt
+					m.menu.SetItems(actionMenuItems(wt.HasSession))
+					m.menu.Select(0)
+					m.state = stateActionMenu
 				case kindOrphan:
 					m.pending = sel.title
 					m.menu.SetItems(orphanMenuItems())
