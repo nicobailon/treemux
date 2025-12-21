@@ -192,6 +192,16 @@ TREEMUX_SESSION_NAME="folder"
 - JetBrains and VS Code handle worktrees well
 - Some IDEs get confused - check your IDE's worktree support
 
+## Contributing
+
+Contributions welcome! Please read the [contributing guidelines](CONTRIBUTING.md) first.
+
+## Related
+
+- [fzf](https://github.com/junegunn/fzf) - Powers the interactive TUI
+- [tmux](https://github.com/tmux/tmux) - Terminal multiplexer
+- [git-worktree](https://git-scm.com/docs/git-worktree) - Git's worktree documentation
+
 ## License
 
-MIT
+[MIT](LICENSE)
