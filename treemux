@@ -559,8 +559,9 @@ treemux_main() {
       proc_warning=$'\n  \033[90mRunning: '$procs$'\033[0m'
     fi
     
-    local green=$'\e[32m' red=$'\e[31m' dim=$'\e[90m' reset=$'\e[0m'
+    local green=$'\e[32m' red=$'\e[31m' dim=$'\e[90m' cyan=$'\e[36m' reset=$'\e[0m'
     local action=$(printf "%s\n" \
+      "jump|  ${cyan}> Jump${reset}" \
       "adopt|  ${green}+ Adopt${reset} ${dim}(create worktree)${reset}" \
       "kill|  ${red}x Kill session${reset}" \
       "back|  ${dim}< Back${reset}" \
@@ -577,6 +578,10 @@ treemux_main() {
       | cut -d'|' -f1)
     
     case "$action" in
+      jump)
+        tmux switch-client -t "$orphan_name"
+        _treemux_return 0
+        ;;
       adopt)
         local default_branch=$(treemux_default_branch)
         local branches=$(git branch --format='%(refname:short)' | grep -v '^\*')
