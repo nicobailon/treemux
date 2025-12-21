@@ -2,6 +2,12 @@
 
 Git worktree + tmux session manager. One workspace, one branch, one terminal.
 
+<p align="center">
+  <img src="screen1.png" width="32%" />
+  <img src="screen2.png" width="32%" />
+  <img src="screen3.png" width="32%" />
+</p>
+
 ## Why Worktrees + Tmux Sessions Together?
 
 ### The Context Switching Problem
