@@ -189,11 +189,13 @@ treemux_main() {
     local reset=$'\e[0m'
     local name_color=$'\e[36m'
     local branch_color=$'\e[33m'
+    local dim=$'\e[90m'
     local current_mark=$([[ "$wt_path" == "$current_wt" ]] && echo $'\e[35m● \e[0m' || echo "  ")
     local session_icon=$([[ -n "$has_session" ]] && echo $'\e[32m\e[0m' || echo $'\e[90m\e[0m')
+    local session_label=$([[ -n "$has_session" ]] && echo "" || echo " ${dim}+ new session${reset}")
     
     local padded_name=$(printf "%-30s" "$name")
-    local formatted_line="$wt_path|${current_mark}${session_icon}  ${name_color}${padded_name}${reset} ${branch_color} ${branch}${reset}"
+    local formatted_line="$wt_path|${current_mark}${session_icon}  ${name_color}${padded_name}${reset} ${branch_color} ${branch}${reset}${session_label}"
     
     if [[ "$wt_path" == "$current_wt" ]]; then
       current_line="$formatted_line"
@@ -370,11 +372,12 @@ treemux_main() {
       wt_path=${line%% *}; branch=${line##*\[}; branch=${branch%]}; name=${wt_path:t}
       wt_names+=("$name")
       has_session=$(tmux has-session -t "$name" 2>/dev/null && echo "1")
-      reset=$'"'"'\e[0m'"'"'; name_color=$'"'"'\e[36m'"'"'; branch_color=$'"'"'\e[33m'"'"'
+      reset=$'"'"'\e[0m'"'"'; name_color=$'"'"'\e[36m'"'"'; branch_color=$'"'"'\e[33m'"'"'; dim=$'"'"'\e[90m'"'"'
       current_mark="  "
       session_icon=$([[ -n "$has_session" ]] && echo $'"'"'\e[32m\e[0m'"'"' || echo $'"'"'\e[90m\e[0m'"'"')
+      session_label=$([[ -n "$has_session" ]] && echo "" || echo " ${dim}+ new session${reset}")
       padded_name=$(printf "%-30s" "$name")
-      echo "$wt_path|${current_mark}${session_icon}  ${name_color}${padded_name}${reset} ${branch_color} ${branch}${reset}"
+      echo "$wt_path|${current_mark}${session_icon}  ${name_color}${padded_name}${reset} ${branch_color} ${branch}${reset}${session_label}"
     done
     wt_names=($(git worktree list | while read -r line; do echo "${line%% *}" | xargs basename; done))
     orphans=()
