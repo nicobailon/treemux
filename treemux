@@ -302,6 +302,9 @@ treemux_main() {
           echo -e "\033[90m No active processes\033[0m"
         fi
       fi
+      echo ""
+      echo -e "\033[90m─────────────────────────────────────\033[0m"
+      echo -e "\033[38;5;250menter\033[0m \033[90mto adopt or kill\033[0m"
       exit 0
     fi
     
@@ -364,6 +367,15 @@ treemux_main() {
     # Recent commits
     echo -e "\033[1;34m━━━ Recent Commits ━━━\033[0m"
     git log --oneline --graph --decorate --color=always -6 2>/dev/null
+    
+    # Action hint
+    echo ""
+    echo -e "\033[90m─────────────────────────────────────\033[0m"
+    if tmux has-session -t "$name" 2>/dev/null; then
+      echo -e "\033[38;5;250menter\033[0m \033[90mto jump\033[0m"
+    else
+      echo -e "\033[38;5;250menter\033[0m \033[90mto create session + jump\033[0m"
+    fi
   '
   
   local reload_cmd='
@@ -418,7 +430,7 @@ treemux_main() {
     --prompt=" new worktree: " \
     --pointer="" \
     --marker="" \
-    --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;38;5;212mt\033[38;5;213mr\033[38;5;177me\033[38;5;141me\033[38;5;105mm\033[38;5;69mu\033[38;5;33mx\033[0m'"$welcome_msg"$'\n  \033[38;5;250mType name + enter to create new │ Select existing + enter to jump\033[0m\n  \033[38;5;103mtab\033[0m \033[38;5;250mactions\033[0m  \033[38;5;103mctrl-d\033[0m \033[38;5;250mdelete\033[0m  \033[38;5;103m?\033[0m \033[38;5;250mhelp\033[0m  \033[38;5;103mesc\033[0m \033[38;5;250mcancel\033[0m\n\n     \033[38;5;103mWORKTREE                        BRANCH\033[0m' \
+    --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;38;5;212mt\033[38;5;213mr\033[38;5;177me\033[38;5;141me\033[38;5;105mm\033[38;5;69mu\033[38;5;33mx\033[0m'"$welcome_msg"$'\n  \033[38;5;250mType name to create │ Select + enter to jump │ See preview for actions\033[0m\n  \033[38;5;103mtab\033[0m \033[38;5;250mmore\033[0m  \033[38;5;103mctrl-d\033[0m \033[38;5;250mdelete\033[0m  \033[38;5;103m?\033[0m \033[38;5;250mhelp\033[0m  \033[38;5;103mesc\033[0m \033[38;5;250mcancel\033[0m\n\n     \033[38;5;103mWORKTREE                        BRANCH\033[0m' \
     --header-first \
     --preview="$preview_cmd" \
     --preview-window=right:50%:border-rounded \
