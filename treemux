@@ -487,9 +487,22 @@ treemux_main() {
   
   # Handle "Create new worktree" option
   if [[ "$selected_type" == "create" ]]; then
-    echo ""
-    echo -ne "  \033[32m+\033[0m \033[90mNew worktree name:\033[0m "
-    read -r new_name
+    local new_name=$(: | fzf \
+      --ansi \
+      --height=30% \
+      --layout=reverse \
+      --border=rounded \
+      --margin=1,2 \
+      --padding=1 \
+      --print-query \
+      --prompt="  name: " \
+      --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;32mCreate New Worktree\033[0m\n\n  \033[90mEnter name for worktree + branch, then enter\033[0m\n' \
+      --header-first \
+      --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#a6e3a1' \
+      --color='fg:#cdd6f4,header:#a6e3a1,info:#a6e3a1,pointer:#f5e0dc' \
+      --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#a6e3a1,hl+:#a6e3a1' \
+      --color='border:#a6e3a1' \
+      | head -1)
     
     [[ -z "$new_name" ]] && _treemux_return 0
     
