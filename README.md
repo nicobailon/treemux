@@ -39,21 +39,7 @@ Each switch costs 5-10 minutes reconstructing your environment.
 
 ## The Solution
 
-**Git worktrees** solve file isolation - each worktree is a separate directory with its own branch. But files are only half the story.
-
-**Tmux sessions** solve environment isolation - terminal history, running processes, pane layouts. Your dev server keeps running.
-
-**Together**, they create complete workspace isolation:
-
-| Layer | Worktree | Tmux Session |
-|-------|----------|--------------|
-| Files | Separate working directory | - |
-| Branch | Independent git state | - |
-| Processes | - | Persistent dev servers, watchers |
-| Terminal | - | Command history, scroll buffer |
-| Layout | - | Pane arrangements |
-
-### Why Keep Them Paired?
+**Worktrees isolate your files. Sessions isolate your environment.** A worktree alone means you still restart your dev server on every switch. A session alone means your files are still tangled. Paired together, they form complete workspaces - switch branches and your dev server is already running, your tests are already watching, your terminal history is intact.
 
 treemux treats worktree + session as **one unit**:
 
