@@ -449,7 +449,8 @@ treemux_main() {
     --border=rounded \
     --margin=1,2 \
     --padding=1 \
-    --prompt="  " \
+    --no-info \
+    --prompt="" \
     --pointer="" \
     --marker="" \
     --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;38;5;212mt\033[38;5;213mr\033[38;5;177me\033[38;5;141me\033[38;5;105mm\033[38;5;69mu\033[38;5;33mx\033[0m'"$welcome_msg"$'\n  \033[38;5;250mSelect + enter │ See preview for actions\033[0m\n  \033[38;5;103mtab\033[0m \033[38;5;250mmore\033[0m  \033[38;5;103mctrl-d\033[0m \033[38;5;250mdelete\033[0m  \033[38;5;103m?\033[0m \033[38;5;250mhelp\033[0m  \033[38;5;103mesc\033[0m \033[38;5;250mcancel\033[0m\n' \
@@ -486,24 +487,9 @@ treemux_main() {
   
   # Handle "Create new worktree" option
   if [[ "$selected_type" == "create" ]]; then
-    local green=$'\e[32m' dim=$'\e[90m' reset=$'\e[0m'
-    local new_name=$(echo "" | fzf \
-      --ansi \
-      --height=40% \
-      --layout=reverse \
-      --border=rounded \
-      --margin=1,2 \
-      --padding=1 \
-      --prompt="  name: " \
-      --pointer="" \
-      --print-query \
-      --header=$'\n  \033[1;38;5;34m▲\033[0m \033[1;32mCreate New Worktree\033[0m\n\n  \033[90mEnter a name for the new worktree + branch\033[0m\n  \033[90mPress enter to continue, esc to cancel\033[0m\n' \
-      --header-first \
-      --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#a6e3a1' \
-      --color='fg:#cdd6f4,header:#a6e3a1,info:#a6e3a1,pointer:#f5e0dc' \
-      --color='marker:#f5e0dc,fg+:#cdd6f4,prompt:#a6e3a1,hl+:#a6e3a1' \
-      --color='border:#a6e3a1' \
-      | head -1)
+    echo ""
+    echo -ne "  \033[32m+\033[0m \033[90mNew worktree name:\033[0m "
+    read -r new_name
     
     [[ -z "$new_name" ]] && _treemux_return 0
     
