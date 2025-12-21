@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/nicobailon/treemux/internal/git"
+	"github.com/nicobailon/treemux/internal/recent"
 	"github.com/nicobailon/treemux/internal/workspace"
 )
 
@@ -35,6 +36,7 @@ const (
 	kindCreate itemKind = iota
 	kindWorktree
 	kindOrphan
+	kindRecent
 	kindHeader
 	kindSeparator
 )
@@ -67,6 +69,7 @@ type resultMsg struct {
 
 type model struct {
 	svc             *workspace.Service
+	recentStore     *recent.Store
 	state           viewState
 	nextBranchState viewState
 	list            list.Model
@@ -76,6 +79,7 @@ type model struct {
 	spinner         spinner.Model
 	states          []workspace.WorktreeState
 	orphans         []string
+	recentEntries   []recent.Entry
 	width           int
 	height          int
 	err             error
@@ -140,8 +144,11 @@ func initialModel(svc *workspace.Service) model {
 
 	vp := viewport.New(0, 0)
 
+	recentStore, _ := recent.Load()
+
 	return model{
 		svc:             svc,
+		recentStore:     recentStore,
 		state:           stateMain,
 		nextBranchState: stateCreateBranch,
 		list:            l,
@@ -206,9 +213,25 @@ func killSessionCmd(svc *workspace.Service, name string) tea.Cmd {
 	}
 }
 
-func jumpCmd(svc *workspace.Service, name, path string) tea.Cmd {
+func jumpCmd(svc *workspace.Service, name, path string, store *recent.Store) tea.Cmd {
 	return func() tea.Msg {
 		err := svc.Jump(name, path)
+		if err == nil && store != nil {
+			sessionName := svc.SessionName(path)
+			store.Add(svc.Git.RepoRoot, name, sessionName, path)
+			_ = store.Save()
+		}
+		return resultMsg{action: "jump", err: err}
+	}
+}
+
+func switchRecentCmd(svc *workspace.Service, entry recent.Entry, store *recent.Store) tea.Cmd {
+	return func() tea.Msg {
+		err := svc.SwitchSession(entry.SessionName)
+		if err == nil && store != nil {
+			store.Add(entry.RepoRoot, entry.Worktree, entry.SessionName, entry.Path)
+			_ = store.Save()
+		}
 		return resultMsg{action: "jump", err: err}
 	}
 }
@@ -254,7 +277,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.states = reorderCurrentFirst(msg.states, m.svc.Git.RepoRoot)
 		m.orphans = msg.orphans
-		m.list.SetItems(buildItems(m.states, m.orphans, m.svc.Git.RepoRoot))
+		if m.recentStore != nil {
+			m.recentEntries = m.recentStore.GetOtherProjects(m.svc.Git.RepoRoot, 5)
+		}
+		m.list.SetItems(buildItems(m.states, m.orphans, m.recentEntries, m.svc.Git.RepoRoot))
 		m.updatePreview()
 		return m, nil
 
@@ -351,7 +377,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch {
 				case strings.Contains(title, "Jump"):
 					if m.pendingWT != nil {
-						return m, jumpCmd(m.svc, m.pendingWT.Worktree.Name, m.pendingWT.Worktree.Path)
+						return m, jumpCmd(m.svc, m.pendingWT.Worktree.Name, m.pendingWT.Worktree.Path, m.recentStore)
 					}
 					if m.pending != "" {
 						return m, switchSessionCmd(m.svc, m.pending)
@@ -433,12 +459,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.input.Focus()
 				case kindWorktree:
 					wt := sel.data.(workspace.WorktreeState)
-					cmds = append(cmds, jumpCmd(m.svc, wt.Worktree.Name, wt.Worktree.Path))
+					cmds = append(cmds, jumpCmd(m.svc, wt.Worktree.Name, wt.Worktree.Path, m.recentStore))
 				case kindOrphan:
 					m.pending = sel.title
 					m.menu.SetItems(orphanMenuItems())
 					m.menu.Select(0)
 					m.state = stateOrphanMenu
+				case kindRecent:
+					r := sel.data.(recent.Entry)
+					cmds = append(cmds, switchRecentCmd(m.svc, r, m.recentStore))
 				}
 			}
 		case "tab":
@@ -505,6 +534,9 @@ func (m *model) updatePreview() {
 	case kindWorktree:
 		wt := sel.data.(workspace.WorktreeState)
 		m.preview.SetContent(renderWorktreePreview(wt))
+	case kindRecent:
+		r := sel.data.(recent.Entry)
+		m.preview.SetContent(renderRecentPreview(r))
 	default:
 		m.preview.SetContent("")
 	}
@@ -589,7 +621,7 @@ func (m model) View() string {
 
 // Helpers
 
-func buildItems(states []workspace.WorktreeState, orphans []string, currentPath string) []list.Item {
+func buildItems(states []workspace.WorktreeState, orphans []string, recentEntries []recent.Entry, currentPath string) []list.Item {
 	items := []list.Item{}
 	items = append(items, listItem{
 		title: "+ Create new worktree ...",
@@ -602,6 +634,17 @@ func buildItems(states []workspace.WorktreeState, orphans []string, currentPath 
 			data:      st,
 			isCurrent: st.Worktree.Path == currentPath,
 		})
+	}
+	if len(recentEntries) > 0 {
+		items = append(items, listItem{kind: kindSeparator})
+		items = append(items, listItem{title: "RECENT", kind: kindHeader})
+		for _, r := range recentEntries {
+			items = append(items, listItem{
+				title: r.RepoName + "/" + r.Worktree,
+				kind:  kindRecent,
+				data:  r,
+			})
+		}
 	}
 	if len(orphans) > 0 {
 		items = append(items, listItem{kind: kindSeparator})
@@ -687,6 +730,27 @@ func renderOrphanPreview(name string) string {
 		warnStyle.Render("No matching worktree found."),
 		"",
 		dimStyle.Render("Actions: jump, adopt, or kill"),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderRecentPreview(r recent.Entry) string {
+	lines := []string{
+		sectionTitle(iconPath + " Other Project"),
+		"",
+		sectionTitle("Project"),
+		textStyle.Render(r.RepoName),
+		"",
+		sectionTitle("Worktree"),
+		textStyle.Render(r.Worktree),
+		"",
+		sectionTitle("Session"),
+		textStyle.Render(r.SessionName),
+		"",
+		sectionTitle("Path"),
+		dimStyle.Render(r.Path),
+		"",
+		dimStyle.Render("Press enter to switch to this session"),
 	}
 	return strings.Join(lines, "\n")
 }
@@ -989,21 +1053,42 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	case kindSeparator:
 		line = separatorStyle.Render(strings.Repeat("─", width))
 	case kindHeader:
-		line = orphanHeaderStyle.Render(i.title + " " + dimStyle.Render("(no worktree)"))
+		suffix := ""
+		if i.title == "ORPHANED SESSIONS" {
+			suffix = " " + dimStyle.Render("(no worktree)")
+		} else if i.title == "RECENT" {
+			suffix = " " + dimStyle.Render("(other projects)")
+		}
+		line = orphanHeaderStyle.Render(i.title + suffix)
 	case kindOrphan:
 		name := i.title
 		label := "orphan"
-		nameWidth := width - len(label) - 6
+		nameWidth := width - len(label) - 5
 		if nameWidth < 10 {
 			nameWidth = 10
 		}
 		paddedName := fmt.Sprintf("%-*s", nameWidth, name)
 		if selected {
-			fullLine := "    " + paddedName + "  " + label
+			fullLine := "   " + paddedName + "  " + label
 			padded := fmt.Sprintf("%-*s", width, fullLine)
 			line = selectedOrphanStyle.Render(padded)
 		} else {
-			line = "    " + warnStyle.Render(paddedName) + "  " + dimStyle.Render(label)
+			line = "   " + warnStyle.Render(paddedName) + "  " + dimStyle.Render(label)
+		}
+	case kindRecent:
+		name := i.title
+		label := "other project"
+		nameWidth := width - len(label) - 5
+		if nameWidth < 10 {
+			nameWidth = 10
+		}
+		paddedName := fmt.Sprintf("%-*s", nameWidth, name)
+		if selected {
+			fullLine := "   " + paddedName + "  " + label
+			padded := fmt.Sprintf("%-*s", width, fullLine)
+			line = selectedStyle.Render(padded)
+		} else {
+			line = "   " + sectionStyle.Render(paddedName) + "  " + dimStyle.Render(label)
 		}
 	}
 
