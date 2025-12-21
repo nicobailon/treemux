@@ -57,29 +57,28 @@ func ensureDeps() error {
 	return fmt.Errorf("missing required dependencies")
 }
 
-func loadServices() (*config.Config, *git.Git, *tmux.Tmux, *workspace.Service, error) {
+func loadServices() (*config.Config, *git.Git, *tmux.Tmux, *workspace.Service, bool, error) {
 	if err := ensureDeps(); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, false, err
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	g, err := git.New()
-	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, false, err
 	}
 	t := &tmux.Tmux{}
+	g, err := git.New()
+	if err != nil {
+		return cfg, nil, t, nil, false, nil
+	}
 	svc := workspace.NewService(g, t, cfg)
-	return cfg, g, t, svc, nil
+	return cfg, g, t, svc, true, nil
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {
-	cfg, g, t, svc, err := loadServices()
+	cfg, g, t, svc, inGitRepo, err := loadServices()
 	if err != nil {
 		return err
 	}
-	_ = cfg
 
 	if versionFlag {
 		fmt.Println(version.Version)
@@ -87,14 +86,17 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	if listFlag {
+		if !inGitRepo {
+			return fmt.Errorf("not in a git repository")
+		}
 		return listAction(g, svc)
 	}
 
-	if !t.IsInsideTmux() && !newSession {
+	if inGitRepo && !t.IsInsideTmux() && !newSession {
 		if err := bootstrapTmux(g.RepoRoot); err != nil {
 			fmt.Fprintf(os.Stderr, "tmux bootstrap failed: %v\n", err)
 			fmt.Fprintln(os.Stderr, "falling back to running TUI in current shell (no tmux session created)")
-			app := tui.New(svc)
+			app := tui.New(svc, cfg, t, inGitRepo)
 			target, err := app.Run()
 			if err != nil {
 				return err
@@ -107,7 +109,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	app := tui.New(svc)
+	app := tui.New(svc, cfg, t, inGitRepo)
 	target, err := app.Run()
 	if err != nil {
 		return err
@@ -155,9 +157,12 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List worktrees and orphaned sessions",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, g, _, svc, err := loadServices()
+		_, g, _, svc, inGitRepo, err := loadServices()
 		if err != nil {
 			return err
+		}
+		if !inGitRepo {
+			return fmt.Errorf("not in a git repository")
 		}
 		return listAction(g, svc)
 	},
@@ -197,9 +202,12 @@ var cleanCmd = &cobra.Command{
 	Use:   "clean",
 	Short: "Find and fix orphaned tmux sessions / worktrees without sessions",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, _, t, svc, err := loadServices()
+		_, _, t, svc, inGitRepo, err := loadServices()
 		if err != nil {
 			return err
+		}
+		if !inGitRepo {
+			return fmt.Errorf("not in a git repository")
 		}
 		states, orphans, err := svc.List()
 		if err != nil {

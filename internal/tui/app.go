@@ -13,8 +13,11 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/nicobailon/treemux/internal/config"
 	"github.com/nicobailon/treemux/internal/git"
 	"github.com/nicobailon/treemux/internal/recent"
+	"github.com/nicobailon/treemux/internal/scanner"
+	"github.com/nicobailon/treemux/internal/tmux"
 	"github.com/nicobailon/treemux/internal/workspace"
 )
 
@@ -37,6 +40,8 @@ const (
 	kindWorktree
 	kindOrphan
 	kindRecent
+	kindGlobal
+	kindRepoHeader
 	kindHeader
 	kindSeparator
 )
@@ -58,6 +63,11 @@ type dataLoadedMsg struct {
 	orphans []string
 }
 
+type globalDataLoadedMsg struct {
+	worktrees []scanner.RepoWorktree
+	orphans   []string
+}
+
 type branchesMsg struct {
 	branches []string
 }
@@ -69,6 +79,8 @@ type resultMsg struct {
 
 type model struct {
 	svc             *workspace.Service
+	cfg             *config.Config
+	tmux            *tmux.Tmux
 	recentStore     *recent.Store
 	state           viewState
 	nextBranchState viewState
@@ -80,14 +92,18 @@ type model struct {
 	states          []workspace.WorktreeState
 	orphans         []string
 	recentEntries   []recent.Entry
+	globalWorktrees []scanner.RepoWorktree
 	width           int
 	height          int
 	err             error
 	pending         string
 	pendingWT       *workspace.WorktreeState
+	pendingGlobal   *scanner.RepoWorktree
 	loading         bool
 	filtering       bool
 	jumpTarget      *JumpTarget
+	globalMode      bool
+	inGitRepo       bool
 }
 
 type JumpTarget struct {
@@ -96,15 +112,18 @@ type JumpTarget struct {
 }
 
 type App struct {
-	svc *workspace.Service
+	svc       *workspace.Service
+	cfg       *config.Config
+	tmux      *tmux.Tmux
+	inGitRepo bool
 }
 
-func New(svc *workspace.Service) *App {
-	return &App{svc: svc}
+func New(svc *workspace.Service, cfg *config.Config, t *tmux.Tmux, inGitRepo bool) *App {
+	return &App{svc: svc, cfg: cfg, tmux: t, inGitRepo: inGitRepo}
 }
 
 func (a *App) Run() (*JumpTarget, error) {
-	m := initialModel(a.svc)
+	m := initialModel(a.svc, a.cfg, a.tmux, a.inGitRepo)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
@@ -116,7 +135,7 @@ func (a *App) Run() (*JumpTarget, error) {
 	return nil, nil
 }
 
-func initialModel(svc *workspace.Service) model {
+func initialModel(svc *workspace.Service, cfg *config.Config, t *tmux.Tmux, inGitRepo bool) model {
 	del := newItemDelegate(50)
 	l := list.New([]list.Item{}, del, 0, 0)
 	l.DisableQuitKeybindings()
@@ -160,6 +179,8 @@ func initialModel(svc *workspace.Service) model {
 
 	return model{
 		svc:             svc,
+		cfg:             cfg,
+		tmux:            t,
 		recentStore:     recentStore,
 		state:           stateMain,
 		nextBranchState: stateCreateBranch,
@@ -169,12 +190,17 @@ func initialModel(svc *workspace.Service) model {
 		menu:            menu,
 		spinner:         sp,
 		loading:         true,
+		globalMode:      !inGitRepo,
+		inGitRepo:       inGitRepo,
 	}
 }
 
 // TEA plumbing
 
 func (m model) Init() tea.Cmd {
+	if m.globalMode {
+		return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+	}
 	return tea.Batch(m.spinner.Tick, loadDataCmd(m.svc))
 }
 
@@ -185,6 +211,28 @@ func loadDataCmd(svc *workspace.Service) tea.Cmd {
 			return resultMsg{action: "load", err: err}
 		}
 		return dataLoadedMsg{states: states, orphans: orphans}
+	}
+}
+
+func loadGlobalDataCmd(cfg *config.Config, t *tmux.Tmux) tea.Cmd {
+	return func() tea.Msg {
+		worktrees := scanner.ScanAll(cfg.SearchPaths)
+		sessions, _ := t.ListSessions()
+		sessionSet := make(map[string]bool)
+		for _, s := range sessions {
+			sessionSet[s.Name] = true
+		}
+		wtNames := make(map[string]bool)
+		for _, wt := range worktrees {
+			wtNames[wt.Worktree.Name] = true
+		}
+		var orphans []string
+		for name := range sessionSet {
+			if !wtNames[name] {
+				orphans = append(orphans, name)
+			}
+		}
+		return globalDataLoadedMsg{worktrees: worktrees, orphans: orphans}
 	}
 }
 
@@ -305,6 +353,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updatePreview()
 		return m, nil
 
+	case globalDataLoadedMsg:
+		m.loading = false
+		m.globalWorktrees = msg.worktrees
+		m.orphans = msg.orphans
+		m.list.SetItems(buildGlobalItems(m.globalWorktrees, m.orphans))
+		m.updatePreview()
+		return m, nil
+
 	case branchesMsg:
 		items := []list.Item{}
 		for _, b := range msg.branches {
@@ -413,6 +469,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: m.pendingWT.Worktree.Path}
 						return m, tea.Quit
 					}
+					if m.pendingGlobal != nil {
+						sessionName := m.pendingGlobal.Worktree.Name
+						if !m.tmux.HasSession(sessionName) {
+							_ = m.tmux.NewSession(sessionName, m.pendingGlobal.Worktree.Path)
+						}
+						if m.recentStore != nil {
+							m.recentStore.Add(m.pendingGlobal.RepoRoot, m.pendingGlobal.Worktree.Name, sessionName, m.pendingGlobal.Worktree.Path)
+							_ = m.recentStore.Save()
+						}
+						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: m.pendingGlobal.Worktree.Path}
+						return m, tea.Quit
+					}
 					if m.pending != "" {
 						m.jumpTarget = &JumpTarget{SessionName: m.pending}
 						return m, tea.Quit
@@ -489,6 +557,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.state = stateHelp
 			}
+		case "g":
+			if m.state == stateMain {
+				m.globalMode = !m.globalMode
+				m.loading = true
+				if m.globalMode {
+					return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+				}
+				if m.inGitRepo {
+					return m, tea.Batch(m.spinner.Tick, loadDataCmd(m.svc))
+				}
+				m.globalMode = true
+				return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+			}
 		case "enter":
 			if sel, ok := m.list.SelectedItem().(listItem); ok {
 				switch sel.kind {
@@ -515,6 +596,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.jumpTarget = &JumpTarget{SessionName: r.SessionName, Path: r.Path}
 					return m, tea.Quit
+				case kindGlobal:
+					wt := sel.data.(scanner.RepoWorktree)
+					m.pendingGlobal = &wt
+					m.menu.SetItems(globalActionMenuItems())
+					m.menu.Select(0)
+					m.state = stateActionMenu
 				}
 			}
 		case "tab":
@@ -574,7 +661,11 @@ func (m *model) updatePreview() {
 	}
 	switch sel.kind {
 	case kindCreate:
-		m.preview.SetContent(renderCreatePreview())
+		if m.globalMode {
+			m.preview.SetContent(renderGlobalCreatePreview())
+		} else {
+			m.preview.SetContent(renderCreatePreview())
+		}
 	case kindOrphan:
 		name := sel.title
 		m.preview.SetContent(renderOrphanPreview(name))
@@ -584,6 +675,9 @@ func (m *model) updatePreview() {
 	case kindRecent:
 		r := sel.data.(recent.Entry)
 		m.preview.SetContent(renderRecentPreview(r))
+	case kindGlobal:
+		wt := sel.data.(scanner.RepoWorktree)
+		m.preview.SetContent(renderGlobalWorktreePreview(wt))
 	default:
 		m.preview.SetContent("")
 	}
@@ -634,19 +728,28 @@ func (m model) View() string {
 		t3.Render("u") +
 		t4.Render("x")
 
+	modeIndicator := ""
+	if m.globalMode {
+		modeIndicator = "  " + warnStyle.Render("[GLOBAL]")
+	}
+
 	headerBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(overlayColor).
 		Padding(0, 2).
 		MarginTop(1).
 		Width(m.width - 4).
-		Render(gradientTitle + "  " + dimStyle.Render("git worktrees + tmux sessions"))
+		Render(gradientTitle + "  " + dimStyle.Render("git worktrees + tmux sessions") + modeIndicator)
+
+	toggleHint := keyStyle.Render("g") + dimStyle.Render(" global  ")
+	if m.globalMode {
+		toggleHint = keyStyle.Render("g") + dimStyle.Render(" repo  ")
+	}
 
 	footer := footerStyle.Render(
 		keyStyle.Render("enter") + dimStyle.Render(" select  ") +
 			keyStyle.Render("/") + dimStyle.Render(" filter  ") +
-			keyStyle.Render("tab") + dimStyle.Render(" menu  ") +
-			keyStyle.Render("ctrl+d") + dimStyle.Render(" delete  ") +
+			toggleHint +
 			keyStyle.Render("?") + dimStyle.Render(" help  ") +
 			keyStyle.Render("q") + dimStyle.Render(" quit"),
 	)
@@ -693,6 +796,44 @@ func buildItems(states []workspace.WorktreeState, orphans []string, recentEntrie
 			})
 		}
 	}
+	if len(orphans) > 0 {
+		items = append(items, listItem{kind: kindSeparator})
+		items = append(items, listItem{title: "ORPHANED SESSIONS", kind: kindHeader})
+		for _, o := range orphans {
+			items = append(items, listItem{
+				title: o,
+				kind:  kindOrphan,
+				data:  o,
+			})
+		}
+	}
+	return items
+}
+
+func buildGlobalItems(worktrees []scanner.RepoWorktree, orphans []string) []list.Item {
+	items := []list.Item{}
+	items = append(items, listItem{
+		title: "+ Create new worktree ... (switch to repo view)",
+		kind:  kindCreate,
+	})
+
+	currentRepo := ""
+	for _, wt := range worktrees {
+		if wt.RepoName != currentRepo {
+			if currentRepo != "" {
+				items = append(items, listItem{kind: kindSeparator})
+			}
+			items = append(items, listItem{title: wt.RepoName, kind: kindRepoHeader})
+			currentRepo = wt.RepoName
+		}
+		items = append(items, listItem{
+			title: wt.Worktree.Name,
+			desc:  wt.Worktree.Branch,
+			kind:  kindGlobal,
+			data:  wt,
+		})
+	}
+
 	if len(orphans) > 0 {
 		items = append(items, listItem{kind: kindSeparator})
 		items = append(items, listItem{title: "ORPHANED SESSIONS", kind: kindHeader})
@@ -816,6 +957,39 @@ func renderCreatePreview() string {
 	return strings.Join(lines, "\n")
 }
 
+func renderGlobalCreatePreview() string {
+	lines := []string{
+		sectionTitle(iconCreate + " Create New Worktree"),
+		"",
+		warnStyle.Render("Not available in global view"),
+		"",
+		dimStyle.Render("Press 'g' to switch to repo view first,"),
+		dimStyle.Render("then create a new worktree."),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderGlobalWorktreePreview(wt scanner.RepoWorktree) string {
+	lines := []string{
+		sectionTitle(iconPath + " Worktree"),
+		"",
+		sectionTitle("Project"),
+		textStyle.Render(wt.RepoName),
+		"",
+		sectionTitle("Worktree"),
+		textStyle.Render(wt.Worktree.Name),
+		"",
+		sectionTitle("Branch"),
+		textStyle.Render(wt.Worktree.Branch),
+		"",
+		sectionTitle("Path"),
+		dimStyle.Render(wt.Worktree.Path),
+		"",
+		dimStyle.Render("Press enter to jump to this worktree"),
+	}
+	return strings.Join(lines, "\n")
+}
+
 func renderMenu(title string, m *list.Model) string {
 	header := titleStyle.Render("▲ " + title)
 	divider := separatorStyle.Render("────────────────────────")
@@ -895,6 +1069,12 @@ func orphanMenuItems() []list.Item {
 		listItem{title: iconJump + "  Jump", desc: "Switch to session", kind: kindHeader},
 		listItem{title: iconAdopt + "  Adopt", desc: "Create worktree for this session", kind: kindHeader},
 		listItem{title: iconKill + "  Kill session", desc: "Kill orphaned session", kind: kindHeader},
+	}
+}
+
+func globalActionMenuItems() []list.Item {
+	return []list.Item{
+		listItem{title: iconJump + "  Jump", desc: "Switch to session", kind: kindHeader},
 	}
 }
 
@@ -1135,6 +1315,24 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 			line = selectedStyle.Render(padded)
 		} else {
 			line = "   " + sectionStyle.Render(paddedName) + "  " + dimStyle.Render(label)
+		}
+	case kindRepoHeader:
+		line = sectionStyle.Render(i.title)
+	case kindGlobal:
+		wt := i.data.(scanner.RepoWorktree)
+		name := wt.Worktree.Name
+		branch := wt.Worktree.Branch
+		nameWidth := width - len(branch) - 6
+		if nameWidth < 10 {
+			nameWidth = 10
+		}
+		paddedName := fmt.Sprintf("   %-*s", nameWidth, name)
+		if selected {
+			fullLine := paddedName + "  " + branch
+			padded := fmt.Sprintf("%-*s", width, fullLine)
+			line = selectedStyle.Render(padded)
+		} else {
+			line = textStyle.Render(paddedName) + "  " + branchStyle.Render(branch)
 		}
 	}
 

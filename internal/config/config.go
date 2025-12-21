@@ -18,18 +18,21 @@ const (
 )
 
 type Config struct {
-	BaseBranch  string `mapstructure:"base_branch"`
-	PathPattern string `mapstructure:"path_pattern"`
-	SessionName string `mapstructure:"session_name"`
-	Theme       string `mapstructure:"theme"`
+	BaseBranch  string   `mapstructure:"base_branch"`
+	PathPattern string   `mapstructure:"path_pattern"`
+	SessionName string   `mapstructure:"session_name"`
+	Theme       string   `mapstructure:"theme"`
+	SearchPaths []string `mapstructure:"search_paths"`
 }
 
 func defaultConfig() *Config {
+	home, _ := os.UserHomeDir()
 	return &Config{
 		BaseBranch:  defaultBaseBranch,
 		PathPattern: defaultPathPattern,
 		SessionName: defaultSessionName,
 		Theme:       defaultTheme,
+		SearchPaths: []string{filepath.Join(home, "Documents", "development")},
 	}
 }
 
