@@ -26,6 +26,7 @@ type viewState int
 
 const (
 	stateMain viewState = iota
+	stateSelectRepo
 	stateCreateName
 	stateCreateBranch
 	stateOrphanBranch
@@ -102,15 +103,22 @@ type model struct {
 	pendingGlobal   *scanner.RepoWorktree
 	loading         bool
 	filtering       bool
-	jumpTarget      *JumpTarget
-	globalMode      bool
-	inGitRepo       bool
-	selectAfterLoad string
+	jumpTarget       *JumpTarget
+	globalMode       bool
+	inGitRepo        bool
+	selectAfterLoad  string
+	pendingCreateSvc *workspace.Service
+	availableRepos   []repoInfo
 }
 
 type JumpTarget struct {
 	SessionName string
 	Path        string
+}
+
+type repoInfo struct {
+	name string
+	root string
 }
 
 type App struct {
@@ -376,7 +384,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.globalWorktrees = msg.worktrees
 		m.orphans = msg.orphans
-		m.list.SetItems(buildGlobalItems(m.globalWorktrees, m.orphans))
+		items := buildGlobalItems(m.globalWorktrees, m.orphans)
+		m.list.SetItems(items)
+		if m.selectAfterLoad != "" {
+			for i, item := range items {
+				if li, ok := item.(listItem); ok && li.kind == kindGlobal && li.title == m.selectAfterLoad {
+					m.list.Select(i)
+					break
+				}
+			}
+			m.selectAfterLoad = ""
+		}
 		m.updatePreview()
 		return m, nil
 
@@ -387,18 +405,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.menu.SetItems(items)
 		selectedIdx := 0
-		var currentBranch string
-		for _, st := range m.states {
-			if st.Worktree.Path == m.svc.Git.RepoRoot {
-				currentBranch = st.Worktree.Branch
-				break
-			}
-		}
-		if currentBranch != "" {
-			for i, b := range msg.branches {
-				if b == currentBranch {
-					selectedIdx = i
+		if m.svc != nil && m.svc.Git != nil {
+			var currentBranch string
+			for _, st := range m.states {
+				if st.Worktree.Path == m.svc.Git.RepoRoot {
+					currentBranch = st.Worktree.Branch
 					break
+				}
+			}
+			if currentBranch != "" {
+				for i, b := range msg.branches {
+					if b == currentBranch {
+						selectedIdx = i
+						break
+					}
 				}
 			}
 		}
@@ -419,6 +439,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.action {
 		case "create", "delete", "kill-session", "adopt":
 			m.state = stateMain
+			m.pendingCreateSvc = nil
 			if m.globalMode {
 				return m, loadGlobalDataCmd(m.cfg, m.tmux)
 			}
@@ -429,6 +450,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// state-specific handling
 	switch m.state {
+	case stateSelectRepo:
+		var cmd tea.Cmd
+		m.menu, cmd = m.menu.Update(msg)
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "enter":
+				idx := m.menu.Index()
+				if idx >= 0 && idx < len(m.availableRepos) {
+					repo := m.availableRepos[idx]
+					g := &git.Git{RepoRoot: repo.root}
+					m.pendingCreateSvc = workspace.NewService(g, m.tmux, m.cfg)
+					m.state = stateCreateName
+					m.input.SetValue("")
+					return m, m.input.Focus()
+				}
+			case "esc":
+				m.state = stateMain
+				m.pendingCreateSvc = nil
+			}
+		}
+		return m, cmd
+
 	case stateCreateName:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
@@ -441,9 +484,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.pending = name
 				m.nextBranchState = stateCreateBranch
-				return m, branchesCmd(m.svc)
+				svc := m.svc
+				if m.pendingCreateSvc != nil {
+					svc = m.pendingCreateSvc
+				}
+				return m, branchesCmd(svc)
 			case "esc":
 				m.state = stateMain
+				m.pendingCreateSvc = nil
 				return m, nil
 			}
 		}
@@ -458,12 +506,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if sel, ok := m.menu.SelectedItem().(listItem); ok {
 					branch := sel.title
 					name := m.pending
-					m.selectAfterLoad = filepath.Base(m.svc.WorktreePath(name))
+					svc := m.svc
+					if m.pendingCreateSvc != nil {
+						svc = m.pendingCreateSvc
+					}
+					m.selectAfterLoad = filepath.Base(svc.WorktreePath(name))
 					m.state = stateMain
-					return m, createWorktreeCmd(m.svc, name, branch)
+					return m, createWorktreeCmd(svc, name, branch)
 				}
 			case "esc":
 				m.state = stateMain
+				m.pendingCreateSvc = nil
 			}
 		}
 		return m, cmd
@@ -618,11 +671,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch sel.kind {
 				case kindCreate:
 					if m.globalMode {
+						repos := extractUniqueRepos(m.globalWorktrees)
+						if len(repos) == 0 {
+							m.err = fmt.Errorf("no repositories found in search paths")
+							return m, nil
+						}
+						m.availableRepos = repos
+						items := make([]list.Item, len(repos))
+						for i, r := range repos {
+							items[i] = listItem{title: r.name, desc: r.root, kind: kindHeader}
+						}
+						m.menu.SetItems(items)
+						m.menu.Select(0)
+						m.state = stateSelectRepo
 						return m, nil
 					}
 					m.state = stateCreateName
 					m.input.SetValue("")
-					m.input.Focus()
+					return m, m.input.Focus()
 				case kindWorktree:
 					wt := sel.data.(workspace.WorktreeState)
 					m.pendingWT = &wt
@@ -748,6 +814,8 @@ func (m model) View() string {
 	}
 
 	switch m.state {
+	case stateSelectRepo:
+		return renderMenu("Select repository", &m.menu)
 	case stateCreateName:
 		return renderPrompt("Create new worktree", "Name:", m.input.View())
 	case stateCreateBranch:
@@ -863,7 +931,7 @@ func buildItems(states []workspace.WorktreeState, orphans []string, recentEntrie
 func buildGlobalItems(worktrees []scanner.RepoWorktree, orphans []string) []list.Item {
 	items := []list.Item{}
 	items = append(items, listItem{
-		title: "+ Create new worktree ... (switch to repo view)",
+		title: "+ Create new worktree ...",
 		kind:  kindCreate,
 	})
 
@@ -1011,10 +1079,13 @@ func renderGlobalCreatePreview() string {
 	lines := []string{
 		sectionTitle(iconCreate + " Create New Worktree"),
 		"",
-		warnStyle.Render("Not available in global view"),
+		dimStyle.Render("This will:"),
 		"",
-		dimStyle.Render("Press 'g' to switch to repo view first,"),
-		dimStyle.Render("then create a new worktree."),
+		textStyle.Render("  1. " + iconPath + "  Select a repository"),
+		textStyle.Render("  2. " + iconBranch + "  Create a git branch"),
+		textStyle.Render("  3. " + iconWorktree + "  Create a worktree"),
+		textStyle.Render("  4. " + iconSession + "  Start a tmux session"),
+		textStyle.Render("  5. " + iconJump + "  Switch to session"),
 	}
 	return strings.Join(lines, "\n")
 }
@@ -1133,6 +1204,18 @@ func globalOrphanMenuItems() []list.Item {
 		listItem{title: iconJump + "  Jump", desc: "Switch to session", kind: kindHeader},
 		listItem{title: iconKill + "  Kill session", desc: "Kill orphaned session", kind: kindHeader},
 	}
+}
+
+func extractUniqueRepos(worktrees []scanner.RepoWorktree) []repoInfo {
+	seen := make(map[string]bool)
+	var repos []repoInfo
+	for _, wt := range worktrees {
+		if !seen[wt.RepoRoot] {
+			seen[wt.RepoRoot] = true
+			repos = append(repos, repoInfo{name: wt.RepoName, root: wt.RepoRoot})
+		}
+	}
+	return repos
 }
 
 func filterStrings(in []string, omit string) []string {
