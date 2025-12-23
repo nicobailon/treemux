@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -153,6 +154,16 @@ func collectProcessNames(pid string, out map[string]struct{}) {
 
 func (t *Tmux) IsInsideTmux() bool {
 	return os.Getenv("TMUX") != ""
+}
+
+func (t *Tmux) CapturePane(sessionName string, lines int) (string, error) {
+	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p",
+		"-S", fmt.Sprintf("-%d", lines), "-E", "-1")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\n"), nil
 }
 
 func countNonEmptyLines(s string) int {

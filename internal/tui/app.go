@@ -93,6 +93,14 @@ type resultMsg struct {
 }
 
 type refreshTickMsg struct{}
+type previewTickMsg struct{}
+type paneContentMsg struct {
+	sessionName string
+	content     string
+	err         error
+}
+
+const previewRefreshInterval = 500 * time.Millisecond
 
 type model struct {
 	svc             *workspace.Service
@@ -127,6 +135,8 @@ type model struct {
 	availableRepos   []repoInfo
 	refreshInterval  time.Duration
 	refreshInFlight  int
+	paneContent      string
+	paneSession      string
 }
 
 type JumpTarget struct {
@@ -246,15 +256,28 @@ func initialModel(svc *workspace.Service, cfg *config.Config, t *tmux.Tmux, inGi
 
 func (m model) Init() tea.Cmd {
 	if m.globalMode {
-		return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux), m.tickCmd())
+		return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux), m.tickCmd(), m.previewTickCmd())
 	}
-	return tea.Batch(m.spinner.Tick, loadDataCmd(m.svc), m.tickCmd())
+	return tea.Batch(m.spinner.Tick, loadDataCmd(m.svc), m.tickCmd(), m.previewTickCmd())
 }
 
 func (m model) tickCmd() tea.Cmd {
 	return tea.Tick(m.refreshInterval, func(time.Time) tea.Msg {
 		return refreshTickMsg{}
 	})
+}
+
+func (m model) previewTickCmd() tea.Cmd {
+	return tea.Tick(previewRefreshInterval, func(time.Time) tea.Msg {
+		return previewTickMsg{}
+	})
+}
+
+func loadPaneContentCmd(t *tmux.Tmux, sessionName string, lines int) tea.Cmd {
+	return func() tea.Msg {
+		content, err := t.CapturePane(sessionName, lines)
+		return paneContentMsg{sessionName: sessionName, content: content, err: err}
+	}
 }
 
 func loadDataCmd(svc *workspace.Service) tea.Cmd {
@@ -427,7 +450,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.selectAfterLoad = ""
 		}
-		m.updatePreview()
+		
 		return m, nil
 
 	case globalDataLoadedMsg:
@@ -448,7 +471,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.selectAfterLoad = ""
 		}
-		m.updatePreview()
+		
 		return m, nil
 
 	case branchesMsg:
@@ -535,6 +558,58 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.tickCmd()
 		}
 		return m, tea.Batch(loadDataCmd(m.svc), m.tickCmd())
+
+	case previewTickMsg:
+		sel, ok := m.list.SelectedItem().(listItem)
+		if !ok {
+			return m, m.previewTickCmd()
+		}
+		var sessionName string
+		switch sel.kind {
+		case kindWorktree:
+			wt := sel.data.(workspace.WorktreeState)
+			if wt.HasSession {
+				sessionName = wt.SessionName
+			}
+		case kindGlobal:
+			wt := sel.data.(scanner.RepoWorktree)
+			if m.tmux.HasSession(wt.Worktree.Name) {
+				sessionName = wt.Worktree.Name
+			}
+		case kindOrphan:
+			sessionName = sel.title
+		}
+		if sessionName != "" {
+			return m, tea.Batch(loadPaneContentCmd(m.tmux, sessionName, 50), m.previewTickCmd())
+		}
+		m.paneContent = ""
+		m.paneSession = ""
+		return m, m.previewTickCmd()
+
+	case paneContentMsg:
+		if msg.err == nil && msg.content != "" {
+			sel, ok := m.list.SelectedItem().(listItem)
+			if ok {
+				var expectedSession string
+				switch sel.kind {
+				case kindWorktree:
+					wt := sel.data.(workspace.WorktreeState)
+					if wt.HasSession {
+						expectedSession = wt.SessionName
+					}
+				case kindGlobal:
+					wt := sel.data.(scanner.RepoWorktree)
+					expectedSession = wt.Worktree.Name
+				case kindOrphan:
+					expectedSession = sel.title
+				}
+				if msg.sessionName == expectedSession {
+					m.paneContent = msg.content
+					m.paneSession = msg.sessionName
+				}
+			}
+		}
+		return m, nil
 
 	case SuccessMsg:
 		m.toast = &toast{message: msg.Message, kind: toastSuccess, expiresAt: time.Now().Add(toastDuration)}
@@ -770,13 +845,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.list, cmd = m.list.Update(msg)
 			cmds = append(cmds, cmd)
 			m.skipNonSelectable(1)
-			m.updatePreview()
+			m.paneContent = ""
+			m.paneSession = ""
+			
 			return m, tea.Batch(cmds...)
 		case "k", "up":
 			m.list, cmd = m.list.Update(msg)
 			cmds = append(cmds, cmd)
 			m.skipNonSelectable(-1)
-			m.updatePreview()
+			m.paneContent = ""
+			m.paneSession = ""
+			
 			return m, tea.Batch(cmds...)
 		}
 	}
@@ -910,7 +989,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// not used
 	}
 
-	m.updatePreview()
+	
 	return m, tea.Batch(cmds...)
 }
 
@@ -1076,37 +1155,6 @@ func (m *model) commandPaletteItems() []CommandItem {
 	return items
 }
 
-// Preview rendering
-
-func (m *model) updatePreview() {
-	sel, ok := m.list.SelectedItem().(listItem)
-	if !ok {
-		return
-	}
-	switch sel.kind {
-	case kindCreate:
-		if m.globalMode {
-			m.preview.SetContent(renderGlobalCreatePreview())
-		} else {
-			m.preview.SetContent(renderCreatePreview())
-		}
-	case kindOrphan:
-		name := sel.title
-		m.preview.SetContent(renderOrphanPreview(name))
-	case kindWorktree:
-		wt := sel.data.(workspace.WorktreeState)
-		m.preview.SetContent(renderWorktreePreview(wt))
-	case kindRecent:
-		r := sel.data.(recent.Entry)
-		m.preview.SetContent(renderRecentPreview(r))
-	case kindGlobal:
-		wt := sel.data.(scanner.RepoWorktree)
-		m.preview.SetContent(renderGlobalWorktreePreview(wt))
-	default:
-		m.preview.SetContent("")
-	}
-}
-
 // View
 
 func (m model) View() string {
@@ -1139,7 +1187,10 @@ func (m model) View() string {
 	}
 
 	left := listFrameStyle.Render(m.list.View())
-	right := previewFrameStyle.Render(m.preview.View())
+
+	previewContent := m.renderPreviewWithTerminal()
+	right := previewFrameStyle.Render(previewContent)
+
 	if m.toast != nil && !m.toast.expired() {
 		styles := toastStyles{
 			success: successStyle.Copy().Bold(true),
@@ -1296,40 +1347,207 @@ func reorderCurrentFirst(states []workspace.WorktreeState, currentPath string) [
 	return append(head, tail...)
 }
 
-func renderWorktreePreview(wt workspace.WorktreeState) string {
-	lines := []string{
-		sectionTitle(iconPath + " Path"),
-		dimStyle.Render(wt.Worktree.Path),
-		"",
-		sectionTitle(iconBranch + " Branch"),
-		textStyle.Render(wt.Worktree.Branch),
-		"",
-		sectionTitle("Status"),
-		statusLine(wt.Status),
+func (m *model) renderCompactTerminal(maxLines int) string {
+	if m.paneContent == "" {
+		return ""
 	}
+
+	termStyle := lipgloss.NewStyle().Foreground(subTextColor)
+	headerStyle := lipgloss.NewStyle().Foreground(teal).Bold(true)
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(overlayColor).
+		Padding(0, 1)
+
+	lines := strings.Split(m.paneContent, "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+
+	var termLines []string
+	maxWidth := m.preview.Width - 8
+	if maxWidth < 20 {
+		maxWidth = 20
+	}
+	for _, line := range lines {
+		if len(line) > maxWidth {
+			line = line[:maxWidth-3] + "..."
+		}
+		termLines = append(termLines, termStyle.Render(line))
+	}
+
+	boxWidth := m.preview.Width - 4
+	if boxWidth < 20 {
+		boxWidth = 20
+	}
+	termBox := boxStyle.Width(boxWidth).Render(strings.Join(termLines, "\n"))
+	return headerStyle.Render(iconSession+" Terminal") + "\n" + termBox
+}
+
+func (m *model) renderPreviewWithTerminal() string {
+	sel, ok := m.list.SelectedItem().(listItem)
+	if !ok {
+		return dimStyle.Render("Select a worktree")
+	}
+
+	var infoContent string
+	switch sel.kind {
+	case kindCreate:
+		if m.globalMode {
+			infoContent = m.renderGlobalCreatePreview()
+		} else {
+			infoContent = m.renderCreatePreview()
+		}
+	case kindOrphan:
+		infoContent = m.renderOrphanPreview(sel.title)
+	case kindWorktree:
+		wt := sel.data.(workspace.WorktreeState)
+		infoContent = m.renderWorktreePreviewNew(wt)
+	case kindRecent:
+		r := sel.data.(recent.Entry)
+		infoContent = m.renderRecentPreview(r)
+	case kindGlobal:
+		wt := sel.data.(scanner.RepoWorktree)
+		infoContent = m.renderGlobalPreview(wt)
+	default:
+		infoContent = ""
+	}
+
+	terminalPreview := m.renderCompactTerminal(6)
+	if terminalPreview != "" {
+		return terminalPreview + "\n\n" + infoContent
+	}
+	return infoContent
+}
+
+func (m *model) renderCreatePreview() string {
+	title := sectionStyle.Render(iconCreate + " New Worktree")
+	steps := []string{
+		dimStyle.Render("1.") + " " + textStyle.Render("Select base branch"),
+		dimStyle.Render("2.") + " " + textStyle.Render("Create worktree"),
+		dimStyle.Render("3.") + " " + textStyle.Render("Start tmux session"),
+	}
+	hint := dimStyle.Render("Press enter to begin")
+	return title + "\n\n" + strings.Join(steps, "\n") + "\n\n" + hint
+}
+
+func (m *model) renderGlobalCreatePreview() string {
+	title := sectionStyle.Render(iconCreate + " New Worktree")
+	steps := []string{
+		dimStyle.Render("1.") + " " + textStyle.Render("Select repository"),
+		dimStyle.Render("2.") + " " + textStyle.Render("Select base branch"),
+		dimStyle.Render("3.") + " " + textStyle.Render("Create worktree"),
+		dimStyle.Render("4.") + " " + textStyle.Render("Start tmux session"),
+	}
+	hint := dimStyle.Render("Press enter to begin")
+	return title + "\n\n" + strings.Join(steps, "\n") + "\n\n" + hint
+}
+
+func (m *model) renderOrphanPreview(name string) string {
+	title := warnStyle.Render(iconOrphan + " Orphaned Session")
+	nameDisplay := m.truncatePath(name, m.preview.Width-4)
+	info := textStyle.Render(nameDisplay)
+	warning := dimStyle.Render("No matching worktree")
+	hint := dimStyle.Render("enter") + subTextStyle.Render(" jump  ") +
+		dimStyle.Render("tab") + subTextStyle.Render(" actions")
+	return title + "\n\n" + info + "\n" + warning + "\n\n" + hint
+}
+
+func (m *model) renderRecentPreview(r recent.Entry) string {
+	title := sectionStyle.Render(iconPath + " " + r.RepoName)
+	
+	maxW := m.preview.Width - 12
+	if maxW < 20 {
+		maxW = 20
+	}
+	
+	worktree := r.Worktree
+	if maxW > 4 && len(worktree) > maxW {
+		worktree = worktree[:maxW-2] + ".."
+	}
+	
+	pathDisplay := r.Path
+	if len(pathDisplay) > maxW {
+		pathDisplay = "..." + pathDisplay[len(pathDisplay)-maxW+3:]
+	}
+
+	lines := []string{
+		title,
+		"",
+		dimStyle.Render("Worktree") + "  " + textStyle.Render(worktree),
+		dimStyle.Render("Session ") + "  " + textStyle.Render(r.SessionName),
+		dimStyle.Render("Path    ") + "  " + subTextStyle.Render(pathDisplay),
+		"",
+		dimStyle.Render("enter") + subTextStyle.Render(" switch to session"),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *model) renderWorktreePreviewNew(wt workspace.WorktreeState) string {
+	maxW := m.preview.Width - 12
+	if maxW < 20 {
+		maxW = 20
+	}
+
+	title := currentStyle.Render(iconWorktree + " " + wt.Worktree.Name)
+	
+	pathDisplay := wt.Worktree.Path
+	if len(pathDisplay) > maxW {
+		pathDisplay = "..." + pathDisplay[len(pathDisplay)-maxW+3:]
+	}
+
+	statusText := "unknown"
+	if wt.Status != nil {
+		if wt.Status.Clean {
+			statusText = successStyle.Render(iconClean + " clean")
+		} else {
+			parts := []string{}
+			if wt.Status.Modified > 0 {
+				parts = append(parts, warnStyle.Render(fmt.Sprintf("%d modified", wt.Status.Modified)))
+			}
+			if wt.Status.Staged > 0 {
+				parts = append(parts, sectionStyle.Render(fmt.Sprintf("%d staged", wt.Status.Staged)))
+			}
+			if wt.Status.Untracked > 0 {
+				parts = append(parts, dimStyle.Render(fmt.Sprintf("%d untracked", wt.Status.Untracked)))
+			}
+			statusText = strings.Join(parts, ", ")
+		}
+	}
+
+	lines := []string{
+		title,
+		"",
+		dimStyle.Render("Branch") + "  " + textStyle.Render(wt.Worktree.Branch),
+		dimStyle.Render("Status") + "  " + statusText,
+		dimStyle.Render("Path  ") + "  " + subTextStyle.Render(pathDisplay),
+	}
+
 	if wt.Ahead > 0 || wt.Behind > 0 {
-		syncInfo := ""
+		sync := ""
 		if wt.Ahead > 0 {
-			syncInfo += successStyle.Render(fmt.Sprintf("%s %d ", iconAhead, wt.Ahead))
+			sync += successStyle.Render(fmt.Sprintf("%d ahead", wt.Ahead))
 		}
 		if wt.Behind > 0 {
-			syncInfo += warnStyle.Render(fmt.Sprintf("%s %d", iconBehind, wt.Behind))
+			if sync != "" {
+				sync += ", "
+			}
+			sync += warnStyle.Render(fmt.Sprintf("%d behind", wt.Behind))
 		}
-		lines = append(lines, syncInfo)
+		lines = append(lines, dimStyle.Render("Sync  ")+"  "+sync)
 	}
+
 	if wt.SessionInfo != nil {
-		lines = append(lines, "", sectionTitle(iconSession+" Session"))
-		sessionStatus := fmt.Sprintf("Windows: %d  Panes: %d", wt.SessionInfo.Windows, wt.SessionInfo.Panes)
+		sessionInfo := fmt.Sprintf("%d windows, %d panes", wt.SessionInfo.Windows, wt.SessionInfo.Panes)
 		if wt.SessionInfo.IsActive {
-			sessionStatus += "  " + successStyle.Render("● active")
-		} else if !wt.SessionInfo.LastActivity.IsZero() {
-			ago := time.Since(wt.SessionInfo.LastActivity)
-			sessionStatus += "  " + dimStyle.Render(formatDuration(ago)+" ago")
+			sessionInfo += " " + successStyle.Render("● active")
 		}
-		lines = append(lines, sessionStatus)
+		lines = append(lines, dimStyle.Render("Tmux  ")+"  "+textStyle.Render(sessionInfo))
 	}
-	if len(wt.Processes) > 0 {
-		lines = append(lines, "", sectionTitle(iconProcess+" Processes"))
+
+	if len(wt.Processes) > 0 && len(wt.Processes) <= 3 {
+		lines = append(lines, "")
+		lines = append(lines, dimStyle.Render("Running"))
 		for _, p := range wt.Processes {
 			status := ClassifyProcess(p)
 			var style lipgloss.Style
@@ -1338,106 +1556,53 @@ func renderWorktreePreview(wt workspace.WorktreeState) string {
 				style = successStyle
 			case ProcessBuilding:
 				style = warnStyle
-			case ProcessRunning:
-				style = sectionStyle
 			default:
-				style = dimStyle
+				style = subTextStyle
 			}
-			lines = append(lines, style.Render("  "+status.Icon()+" "+p))
-		}
-	}
-	if len(wt.Commits) > 0 {
-		lines = append(lines, "", sectionTitle(iconCommit+" Commits"))
-		for _, c := range wt.Commits {
-			lines = append(lines, dimStyle.Render(c.Hash)+" "+c.Msg)
+			lines = append(lines, "  "+style.Render(status.Icon()+" "+p))
 		}
 	}
 
+	lines = append(lines, "")
+	lines = append(lines, dimStyle.Render("enter")+" "+subTextStyle.Render("jump")+"  "+
+		dimStyle.Render("tab")+" "+subTextStyle.Render("actions"))
+
 	return strings.Join(lines, "\n")
 }
 
-func renderOrphanPreview(name string) string {
+func (m *model) renderGlobalPreview(wt scanner.RepoWorktree) string {
+	maxW := m.preview.Width - 12
+	if maxW < 20 {
+		maxW = 20
+	}
+
+	title := sectionStyle.Render(iconPath + " " + wt.RepoName)
+	
+	pathDisplay := wt.Worktree.Path
+	if len(pathDisplay) > maxW {
+		pathDisplay = "..." + pathDisplay[len(pathDisplay)-maxW+3:]
+	}
+
 	lines := []string{
-		sectionTitle(iconOrphan + " Orphaned Session"),
+		title,
 		"",
-		textStyle.Render(name),
+		dimStyle.Render("Worktree") + "  " + textStyle.Render(wt.Worktree.Name),
+		dimStyle.Render("Branch  ") + "  " + textStyle.Render(wt.Worktree.Branch),
+		dimStyle.Render("Path    ") + "  " + subTextStyle.Render(pathDisplay),
 		"",
-		warnStyle.Render("No matching worktree found."),
-		"",
-		dimStyle.Render("Actions: jump, adopt, or kill"),
+		dimStyle.Render("enter") + subTextStyle.Render(" jump to worktree"),
 	}
 	return strings.Join(lines, "\n")
 }
 
-func renderRecentPreview(r recent.Entry) string {
-	lines := []string{
-		sectionTitle(iconPath + " Other Project"),
-		"",
-		sectionTitle("Project"),
-		textStyle.Render(r.RepoName),
-		"",
-		sectionTitle("Worktree"),
-		textStyle.Render(r.Worktree),
-		"",
-		sectionTitle("Session"),
-		textStyle.Render(r.SessionName),
-		"",
-		sectionTitle("Path"),
-		dimStyle.Render(r.Path),
-		"",
-		dimStyle.Render("Press enter to switch to this session"),
+func (m *model) truncatePath(path string, maxLen int) string {
+	if maxLen < 10 {
+		maxLen = 10
 	}
-	return strings.Join(lines, "\n")
-}
-
-func renderCreatePreview() string {
-	lines := []string{
-		sectionTitle(iconCreate + " Create New Worktree"),
-		"",
-		dimStyle.Render("This will:"),
-		"",
-		textStyle.Render("  1. " + iconBranch + "  Create a git branch"),
-		textStyle.Render("  2. " + iconWorktree + "  Create a worktree"),
-		textStyle.Render("  3. " + iconSession + "  Start a tmux session"),
-		textStyle.Render("  4. " + iconJump + "  Switch to session"),
+	if len(path) <= maxLen {
+		return path
 	}
-	return strings.Join(lines, "\n")
-}
-
-func renderGlobalCreatePreview() string {
-	lines := []string{
-		sectionTitle(iconCreate + " Create New Worktree"),
-		"",
-		dimStyle.Render("This will:"),
-		"",
-		textStyle.Render("  1. " + iconPath + "  Select a repository"),
-		textStyle.Render("  2. " + iconBranch + "  Create a git branch"),
-		textStyle.Render("  3. " + iconWorktree + "  Create a worktree"),
-		textStyle.Render("  4. " + iconSession + "  Start a tmux session"),
-		textStyle.Render("  5. " + iconJump + "  Switch to session"),
-	}
-	return strings.Join(lines, "\n")
-}
-
-func renderGlobalWorktreePreview(wt scanner.RepoWorktree) string {
-	lines := []string{
-		sectionTitle(iconPath + " Worktree"),
-		"",
-		sectionTitle("Project"),
-		textStyle.Render(wt.RepoName),
-		"",
-		sectionTitle("Worktree"),
-		textStyle.Render(wt.Worktree.Name),
-		"",
-		sectionTitle("Branch"),
-		textStyle.Render(wt.Worktree.Branch),
-		"",
-		sectionTitle("Path"),
-		dimStyle.Render(wt.Worktree.Path),
-		"",
-		dimStyle.Render("Press enter to jump to this worktree"),
-	}
-	return strings.Join(lines, "\n")
+	return "..." + path[len(path)-maxLen+3:]
 }
 
 func renderMenu(title string, m *list.Model) string {
@@ -1500,26 +1665,6 @@ func renderHelp() string {
 		helpLine("esc / q", "quit (back in dialogs)"),
 	}, "\n")
 	return modalStyle.Render(content)
-}
-
-func statusLine(s *git.StatusSummary) string {
-	if s == nil {
-		return dimStyle.Render("unknown")
-	}
-	if s.Clean {
-		return successStyle.Render(iconClean + " Clean")
-	}
-	parts := []string{}
-	if s.Staged > 0 {
-		parts = append(parts, successStyle.Render(fmt.Sprintf("%d staged", s.Staged)))
-	}
-	if s.Modified > 0 {
-		parts = append(parts, warnStyle.Render(fmt.Sprintf(iconModified+" %d modified", s.Modified)))
-	}
-	if s.Untracked > 0 {
-		parts = append(parts, dimStyle.Render(fmt.Sprintf("%d untracked", s.Untracked)))
-	}
-	return strings.Join(parts, "  ")
 }
 
 type key struct {
