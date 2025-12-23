@@ -33,7 +33,10 @@ const (
 	stateActionMenu
 	stateOrphanMenu
 	stateHelp
+	stateCommandPalette
 )
+
+const defaultRefreshInterval = 3 * time.Second
 
 type itemKind int
 
@@ -60,6 +63,16 @@ func (i listItem) Title() string       { return i.title }
 func (i listItem) Description() string { return i.desc }
 func (i listItem) FilterValue() string { return i.title }
 
+type CommandItem struct {
+	label string
+	desc  string
+	run   func(*model) tea.Cmd
+}
+
+func (c CommandItem) Title() string       { return c.label }
+func (c CommandItem) Description() string { return c.desc }
+func (c CommandItem) FilterValue() string { return c.label + " " + c.desc }
+
 type dataLoadedMsg struct {
 	states  []workspace.WorktreeState
 	orphans []string
@@ -79,6 +92,8 @@ type resultMsg struct {
 	err    error
 }
 
+type refreshTickMsg struct{}
+
 type model struct {
 	svc             *workspace.Service
 	cfg             *config.Config
@@ -91,13 +106,14 @@ type model struct {
 	input           textinput.Model
 	menu            list.Model
 	spinner         spinner.Model
+	commandPalette  list.Model
 	states          []workspace.WorktreeState
 	orphans         []string
 	recentEntries   []recent.Entry
 	globalWorktrees []scanner.RepoWorktree
 	width           int
 	height          int
-	err             error
+	toast           *toast
 	pending         string
 	pendingWT       *workspace.WorktreeState
 	pendingGlobal   *scanner.RepoWorktree
@@ -109,6 +125,8 @@ type model struct {
 	selectAfterLoad  string
 	pendingCreateSvc *workspace.Service
 	availableRepos   []repoInfo
+	refreshInterval  time.Duration
+	refreshInFlight  int
 }
 
 type JumpTarget struct {
@@ -187,6 +205,23 @@ func initialModel(svc *workspace.Service, cfg *config.Config, t *tmux.Tmux, inGi
 
 	recentStore, _ := recent.Load()
 
+	cmdPaletteDel := list.NewDefaultDelegate()
+	cmdPaletteDel.ShowDescription = true
+	cmdPaletteDel.Styles.NormalTitle = textStyle
+	cmdPaletteDel.Styles.NormalDesc = dimStyle
+	cmdPaletteDel.Styles.SelectedTitle = currentStyle
+	cmdPaletteDel.Styles.SelectedDesc = sectionStyle
+	cmdPalette := list.New([]list.Item{}, cmdPaletteDel, 0, 0)
+	cmdPalette.DisableQuitKeybindings()
+	cmdPalette.SetShowHelp(false)
+	cmdPalette.SetShowStatusBar(false)
+	cmdPalette.SetFilteringEnabled(true)
+	cmdPalette.SetShowTitle(false)
+	cmdPalette.SetShowPagination(false)
+	cmdPalette.FilterInput.Prompt = "> "
+	cmdPalette.FilterInput.PromptStyle = keyStyle
+	cmdPalette.FilterInput.TextStyle = textStyle
+
 	return model{
 		svc:             svc,
 		cfg:             cfg,
@@ -198,10 +233,12 @@ func initialModel(svc *workspace.Service, cfg *config.Config, t *tmux.Tmux, inGi
 		preview:         vp,
 		input:           ti,
 		menu:            menu,
+		commandPalette:  cmdPalette,
 		spinner:         sp,
 		loading:         true,
 		globalMode:      !inGitRepo,
 		inGitRepo:       inGitRepo,
+		refreshInterval: defaultRefreshInterval,
 	}
 }
 
@@ -209,9 +246,15 @@ func initialModel(svc *workspace.Service, cfg *config.Config, t *tmux.Tmux, inGi
 
 func (m model) Init() tea.Cmd {
 	if m.globalMode {
-		return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+		return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux), m.tickCmd())
 	}
-	return tea.Batch(m.spinner.Tick, loadDataCmd(m.svc))
+	return tea.Batch(m.spinner.Tick, loadDataCmd(m.svc), m.tickCmd())
+}
+
+func (m model) tickCmd() tea.Cmd {
+	return tea.Tick(m.refreshInterval, func(time.Time) tea.Msg {
+		return refreshTickMsg{}
+	})
 }
 
 func loadDataCmd(svc *workspace.Service) tea.Cmd {
@@ -361,12 +404,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case dataLoadedMsg:
 		m.loading = false
-		m.states = reorderCurrentFirst(msg.states, m.svc.Git.RepoRoot)
-		m.orphans = msg.orphans
-		if m.recentStore != nil {
-			m.recentEntries = m.recentStore.GetOtherProjects(m.svc.Git.RepoRoot, 5)
+		if m.refreshInFlight > 0 {
+			m.refreshInFlight--
 		}
-		items := buildItems(m.states, m.orphans, m.recentEntries, m.svc.Git.RepoRoot)
+		repoRoot := ""
+		if m.svc != nil && m.svc.Git != nil {
+			repoRoot = m.svc.Git.RepoRoot
+		}
+		m.states = reorderCurrentFirst(msg.states, repoRoot)
+		m.orphans = msg.orphans
+		if m.recentStore != nil && repoRoot != "" {
+			m.recentEntries = m.recentStore.GetOtherProjects(repoRoot, 5)
+		}
+		items := buildItems(m.states, m.orphans, m.recentEntries, repoRoot)
 		m.list.SetItems(items)
 		if m.selectAfterLoad != "" {
 			for i, item := range items {
@@ -382,6 +432,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case globalDataLoadedMsg:
 		m.loading = false
+		if m.refreshInFlight > 0 {
+			m.refreshInFlight--
+		}
 		m.globalWorktrees = msg.worktrees
 		m.orphans = msg.orphans
 		items := buildGlobalItems(m.globalWorktrees, m.orphans)
@@ -431,19 +484,77 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case resultMsg:
+		if msg.action == "load" {
+			m.loading = false
+			if m.refreshInFlight > 0 {
+				m.refreshInFlight--
+			}
+		}
 		if msg.err != nil {
-			m.err = msg.err
-		} else {
-			m.err = nil
+			m.toast = &toast{
+				message:   msg.err.Error(),
+				kind:      toastError,
+				expiresAt: time.Now().Add(toastDuration),
+			}
+			return m, toastExpireCmd()
+		}
+		switch msg.action {
+		case "create":
+			m.toast = &toast{message: "Worktree created", kind: toastSuccess, expiresAt: time.Now().Add(toastDuration)}
+		case "delete":
+			m.toast = &toast{message: "Worktree deleted", kind: toastSuccess, expiresAt: time.Now().Add(toastDuration)}
+		case "kill-session":
+			m.toast = &toast{message: "Session killed", kind: toastSuccess, expiresAt: time.Now().Add(toastDuration)}
+		case "adopt":
+			m.toast = &toast{message: "Session adopted", kind: toastSuccess, expiresAt: time.Now().Add(toastDuration)}
 		}
 		switch msg.action {
 		case "create", "delete", "kill-session", "adopt":
 			m.state = stateMain
 			m.pendingCreateSvc = nil
 			if m.globalMode {
-				return m, loadGlobalDataCmd(m.cfg, m.tmux)
+				return m, tea.Batch(loadGlobalDataCmd(m.cfg, m.tmux), toastExpireCmd())
 			}
-			return m, loadDataCmd(m.svc)
+			if m.svc == nil {
+				return m, toastExpireCmd()
+			}
+			return m, tea.Batch(loadDataCmd(m.svc), toastExpireCmd())
+		}
+		return m, nil
+
+	case refreshTickMsg:
+		if m.refreshInFlight > 0 || m.loading {
+			return m, m.tickCmd()
+		}
+		m.refreshInFlight++
+		if m.globalMode {
+			return m, tea.Batch(loadGlobalDataCmd(m.cfg, m.tmux), m.tickCmd())
+		}
+		if m.svc == nil {
+			m.refreshInFlight--
+			return m, m.tickCmd()
+		}
+		return m, tea.Batch(loadDataCmd(m.svc), m.tickCmd())
+
+	case SuccessMsg:
+		m.toast = &toast{message: msg.Message, kind: toastSuccess, expiresAt: time.Now().Add(toastDuration)}
+		return m, toastExpireCmd()
+
+	case ErrorMsg:
+		m.toast = &toast{message: msg.Error(), kind: toastError, expiresAt: time.Now().Add(toastDuration)}
+		return m, toastExpireCmd()
+
+	case WarningMsg:
+		m.toast = &toast{message: msg.Message, kind: toastWarning, expiresAt: time.Now().Add(toastDuration)}
+		return m, toastExpireCmd()
+
+	case InfoMsg:
+		m.toast = &toast{message: msg.Message, kind: toastInfo, expiresAt: time.Now().Add(toastDuration)}
+		return m, toastExpireCmd()
+
+	case toastExpiredMsg:
+		if m.toast != nil && m.toast.expired() {
+			m.toast = nil
 		}
 		return m, nil
 	}
@@ -488,6 +599,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.pendingCreateSvc != nil {
 					svc = m.pendingCreateSvc
 				}
+				if svc == nil {
+					m.state = stateMain
+					return m, nil
+				}
 				return m, branchesCmd(svc)
 			case "esc":
 				m.state = stateMain
@@ -510,6 +625,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.pendingCreateSvc != nil {
 						svc = m.pendingCreateSvc
 					}
+					if svc == nil {
+						m.state = stateMain
+						return m, nil
+					}
 					m.selectAfterLoad = filepath.Base(svc.WorktreePath(name))
 					m.state = stateMain
 					return m, createWorktreeCmd(svc, name, branch)
@@ -527,6 +646,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			switch keyMsg.String() {
 			case "enter":
+				if m.svc == nil {
+					m.state = stateMain
+					return m, nil
+				}
 				if sel, ok := m.menu.SelectedItem().(listItem); ok {
 					branch := sel.title
 					name := m.pending
@@ -550,12 +673,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				title := item.title
 				switch {
 				case strings.Contains(title, "Jump"):
-					if m.pendingWT != nil {
+					if m.pendingWT != nil && m.svc != nil {
 						sessionName := m.svc.SessionName(m.pendingWT.Worktree.Path)
 						if !m.svc.Tmux.HasSession(sessionName) {
 							_ = m.svc.Tmux.NewSession(sessionName, m.pendingWT.Worktree.Path)
 						}
-						if m.recentStore != nil {
+						if m.recentStore != nil && m.svc.Git != nil {
 							m.recentStore.Add(m.svc.Git.RepoRoot, m.pendingWT.Worktree.Name, sessionName, m.pendingWT.Worktree.Path)
 							_ = m.recentStore.Save()
 						}
@@ -579,26 +702,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, tea.Quit
 					}
 				case strings.Contains(title, "Delete worktree"):
-					if m.pendingWT != nil {
+					if m.pendingWT != nil && m.svc != nil && m.svc.Git != nil {
 						if m.pendingWT.Worktree.Path == m.svc.Git.RepoRoot {
-							m.err = fmt.Errorf("cannot delete current worktree")
+							m.toast = &toast{message: "Cannot delete current worktree", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
 							m.state = stateMain
-							return m, nil
+							return m, toastExpireCmd()
 						}
 						return m, deleteWorktreeCmd(m.svc, m.pendingWT.Worktree.Path)
 					}
 				case strings.Contains(title, "Kill session"):
-					if m.pendingWT != nil {
+					if m.pendingWT != nil && m.svc != nil {
 						return m, killSessionCmd(m.svc, m.pendingWT.SessionName)
 					}
 					if m.pending != "" {
 						if m.globalMode {
 							return m, killSessionDirectCmd(m.tmux, m.pending)
 						}
-						return m, killSessionCmd(m.svc, m.pending)
+						if m.svc != nil {
+							return m, killSessionCmd(m.svc, m.pending)
+						}
 					}
 				case strings.Contains(title, "Adopt"):
-					if m.pending != "" {
+					if m.pending != "" && m.svc != nil {
 						m.nextBranchState = stateOrphanBranch
 						return m, branchesCmd(m.svc)
 					}
@@ -606,6 +731,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateMain
 				return m, nil
 			case "esc":
+				m.state = stateMain
+				return m, nil
+			}
+		}
+		return m, cmd
+
+	case stateCommandPalette:
+		var cmd tea.Cmd
+		m.commandPalette, cmd = m.commandPalette.Update(msg)
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "esc":
+				m.state = stateMain
+				return m, nil
+			case "enter":
+				if item, ok := m.commandPalette.SelectedItem().(CommandItem); ok {
+					m.state = stateMain
+					if item.run != nil {
+						return m, item.run(&m)
+					}
+				}
 				m.state = stateMain
 				return m, nil
 			}
@@ -673,8 +819,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.globalMode {
 						repos := extractUniqueRepos(m.globalWorktrees)
 						if len(repos) == 0 {
-							m.err = fmt.Errorf("no repositories found in search paths")
-							return m, nil
+							m.toast = &toast{message: "No repositories found in search paths", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
+							return m, toastExpireCmd()
 						}
 						m.availableRepos = repos
 						items := make([]list.Item, len(repos))
@@ -706,6 +852,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.state = stateOrphanMenu
 				case kindRecent:
 					r := sel.data.(recent.Entry)
+					if !m.tmux.HasSession(r.SessionName) {
+						if err := m.tmux.NewSession(r.SessionName, r.Path); err != nil {
+							m.toast = &toast{message: "Failed to create session: " + err.Error(), kind: toastError, expiresAt: time.Now().Add(toastDuration)}
+							return m, toastExpireCmd()
+						}
+					}
 					if m.recentStore != nil {
 						m.recentStore.Add(r.RepoRoot, r.Worktree, r.SessionName, r.Path)
 						_ = m.recentStore.Save()
@@ -729,14 +881,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateActionMenu
 			}
 		case "ctrl+d":
+			if m.globalMode || m.svc == nil {
+				return m, nil
+			}
 			if sel, ok := m.list.SelectedItem().(listItem); ok && sel.kind == kindWorktree {
 				wt := sel.data.(workspace.WorktreeState)
-				if wt.Worktree.Path == m.svc.Git.RepoRoot {
-					m.err = fmt.Errorf("cannot delete current worktree")
-				} else {
-					cmds = append(cmds, deleteWorktreeCmd(m.svc, wt.Worktree.Path))
+				if m.svc.Git != nil && wt.Worktree.Path == m.svc.Git.RepoRoot {
+					m.toast = &toast{message: "Cannot delete current worktree", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
+					return m, toastExpireCmd()
 				}
+				cmds = append(cmds, deleteWorktreeCmd(m.svc, wt.Worktree.Path))
 			}
+		case "ctrl+p":
+			return m, m.openCommandPalette()
+		case "r":
+			m.toast = &toast{message: "Refreshing...", kind: toastInfo, expiresAt: time.Now().Add(toastDuration)}
+			m.refreshInFlight++
+			if m.globalMode {
+				return m, tea.Batch(loadGlobalDataCmd(m.cfg, m.tmux), toastExpireCmd())
+			}
+			if m.svc == nil {
+				m.refreshInFlight--
+				return m, toastExpireCmd()
+			}
+			return m, tea.Batch(loadDataCmd(m.svc), toastExpireCmd())
 		}
 	case tea.MouseMsg:
 		// not used
@@ -766,6 +934,146 @@ func (m *model) skipNonSelectable(direction int) {
 	if idx >= 0 && idx < len(items) {
 		m.list.Select(idx)
 	}
+}
+
+func (m *model) openCommandPalette() tea.Cmd {
+	items := m.commandPaletteItems()
+	listItems := make([]list.Item, len(items))
+	for i, item := range items {
+		listItems[i] = item
+	}
+	m.commandPalette.SetItems(listItems)
+	m.commandPalette.ResetFilter()
+	m.commandPalette.SetFilterState(list.Filtering)
+	m.state = stateCommandPalette
+	return nil
+}
+
+func (m *model) commandPaletteItems() []CommandItem {
+	items := []CommandItem{
+		{label: "Create worktree", desc: "Create new worktree from branch", run: func(m *model) tea.Cmd {
+			if m.globalMode {
+				repos := extractUniqueRepos(m.globalWorktrees)
+				if len(repos) == 0 {
+					m.toast = &toast{message: "No repositories found", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
+					return toastExpireCmd()
+				}
+				m.availableRepos = repos
+				items := make([]list.Item, len(repos))
+				for i, r := range repos {
+					items[i] = listItem{title: r.name, desc: r.root, kind: kindHeader}
+				}
+				m.menu.SetItems(items)
+				m.menu.Select(0)
+				m.state = stateSelectRepo
+				return nil
+			}
+			m.state = stateCreateName
+			m.input.SetValue("")
+			return m.input.Focus()
+		}},
+		{label: "Toggle global mode", desc: "Switch between repo and global view", run: func(m *model) tea.Cmd {
+			m.globalMode = !m.globalMode
+			m.loading = true
+			if m.globalMode {
+				return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+			}
+			if m.inGitRepo {
+				return tea.Batch(m.spinner.Tick, loadDataCmd(m.svc))
+			}
+			m.globalMode = true
+			return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+		}},
+		{label: "Refresh", desc: "Reload worktree and session data", run: func(m *model) tea.Cmd {
+			m.toast = &toast{message: "Refreshing...", kind: toastInfo, expiresAt: time.Now().Add(toastDuration)}
+			m.refreshInFlight++
+			if m.globalMode {
+				return tea.Batch(loadGlobalDataCmd(m.cfg, m.tmux), toastExpireCmd())
+			}
+			if m.svc == nil {
+				m.refreshInFlight--
+				return toastExpireCmd()
+			}
+			return tea.Batch(loadDataCmd(m.svc), toastExpireCmd())
+		}},
+		{label: "Show help", desc: "Display keybindings and commands", run: func(m *model) tea.Cmd {
+			m.state = stateHelp
+			return nil
+		}},
+		{label: "Quit", desc: "Exit treemux", run: func(m *model) tea.Cmd {
+			return tea.Quit
+		}},
+	}
+
+	if sel, ok := m.list.SelectedItem().(listItem); ok {
+		switch sel.kind {
+		case kindWorktree:
+			if m.svc == nil {
+				break
+			}
+			wt := sel.data.(workspace.WorktreeState)
+			items = append(items,
+				CommandItem{label: "Jump to worktree", desc: "Switch to selected worktree session", run: func(m *model) tea.Cmd {
+					if m.svc == nil {
+						return nil
+					}
+					sessionName := m.svc.SessionName(wt.Worktree.Path)
+					if !m.svc.Tmux.HasSession(sessionName) {
+						_ = m.svc.Tmux.NewSession(sessionName, wt.Worktree.Path)
+					}
+					if m.recentStore != nil && m.svc.Git != nil {
+						m.recentStore.Add(m.svc.Git.RepoRoot, wt.Worktree.Name, sessionName, wt.Worktree.Path)
+						_ = m.recentStore.Save()
+					}
+					m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: wt.Worktree.Path}
+					return tea.Quit
+				}},
+				CommandItem{label: "Delete worktree", desc: "Remove worktree and kill session", run: func(m *model) tea.Cmd {
+					if m.svc == nil || m.svc.Git == nil {
+						return nil
+					}
+					if wt.Worktree.Path == m.svc.Git.RepoRoot {
+						m.toast = &toast{message: "Cannot delete current worktree", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
+						return toastExpireCmd()
+					}
+					return deleteWorktreeCmd(m.svc, wt.Worktree.Path)
+				}},
+			)
+			if wt.HasSession {
+				items = append(items, CommandItem{label: "Kill session", desc: "Kill tmux session only", run: func(m *model) tea.Cmd {
+					if m.svc == nil {
+						return nil
+					}
+					return killSessionCmd(m.svc, wt.SessionName)
+				}})
+			}
+		case kindGlobal:
+			wt := sel.data.(scanner.RepoWorktree)
+			sessionName := wt.Worktree.Name
+			items = append(items,
+				CommandItem{label: "Jump to worktree", desc: "Switch to selected worktree session", run: func(m *model) tea.Cmd {
+					if !m.tmux.HasSession(sessionName) {
+						_ = m.tmux.NewSession(sessionName, wt.Worktree.Path)
+					}
+					m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: wt.Worktree.Path}
+					return tea.Quit
+				}},
+			)
+		case kindOrphan:
+			sessionName := sel.title
+			items = append(items, CommandItem{label: "Kill orphan session", desc: "Kill this orphaned session", run: func(m *model) tea.Cmd {
+				if m.globalMode {
+					return killSessionDirectCmd(m.tmux, sessionName)
+				}
+				if m.svc == nil {
+					return nil
+				}
+				return killSessionCmd(m.svc, sessionName)
+			}})
+		}
+	}
+
+	return items
 }
 
 // Preview rendering
@@ -826,12 +1134,20 @@ func (m model) View() string {
 		return renderMenu("Actions", &m.menu)
 	case stateOrphanMenu:
 		return renderMenu("Orphaned session", &m.menu)
+	case stateCommandPalette:
+		return renderCommandPalette(&m.commandPalette, m.width, m.height)
 	}
 
 	left := listFrameStyle.Render(m.list.View())
 	right := previewFrameStyle.Render(m.preview.View())
-	if m.err != nil {
-		right = errorStyle.Render(" " + m.err.Error()) + "\n\n" + right
+	if m.toast != nil && !m.toast.expired() {
+		styles := toastStyles{
+			success: successStyle.Copy().Bold(true),
+			error:   errorStyle.Copy().Bold(true),
+			warning: warnStyle.Copy().Bold(true),
+			info:    sectionStyle.Copy().Bold(true),
+		}
+		right = m.toast.render(styles) + "\n\n" + right
 	}
 
 	logoStyle := lipgloss.NewStyle().Foreground(successColor).Bold(true)
@@ -867,6 +1183,7 @@ func (m model) View() string {
 	footer := footerStyle.Render(
 		keyStyle.Render("enter") + dimStyle.Render(" select  ") +
 			keyStyle.Render("/") + dimStyle.Render(" filter  ") +
+			keyStyle.Render("ctrl+p") + dimStyle.Render(" commands  ") +
 			toggleHint +
 			keyStyle.Render("?") + dimStyle.Render(" help  ") +
 			keyStyle.Render("q") + dimStyle.Render(" quit"),
@@ -1014,7 +1331,19 @@ func renderWorktreePreview(wt workspace.WorktreeState) string {
 	if len(wt.Processes) > 0 {
 		lines = append(lines, "", sectionTitle(iconProcess+" Processes"))
 		for _, p := range wt.Processes {
-			lines = append(lines, dimStyle.Render("  "+p))
+			status := ClassifyProcess(p)
+			var style lipgloss.Style
+			switch status {
+			case ProcessServer:
+				style = successStyle
+			case ProcessBuilding:
+				style = warnStyle
+			case ProcessRunning:
+				style = sectionStyle
+			default:
+				style = dimStyle
+			}
+			lines = append(lines, style.Render("  "+status.Icon()+" "+p))
 		}
 	}
 	if len(wt.Commits) > 0 {
@@ -1124,6 +1453,24 @@ func renderPrompt(title, label, input string) string {
 	return modalStyle.Render(header + "\n" + divider + "\n\n" + labelStyled + "\n" + input)
 }
 
+func renderCommandPalette(m *list.Model, width, height int) string {
+	header := titleStyle.Render("  Command Palette")
+	divider := separatorStyle.Render("────────────────────────────────")
+
+	paletteWidth := 60
+	if width > 0 && width < paletteWidth+10 {
+		paletteWidth = width - 10
+	}
+	paletteHeight := 20
+	if height > 0 && height < paletteHeight+6 {
+		paletteHeight = height - 6
+	}
+	m.SetSize(paletteWidth-4, paletteHeight-4)
+
+	content := header + "\n" + divider + "\n\n" + m.View()
+	return modalStyle.Copy().Width(paletteWidth).Render(content)
+}
+
 func renderHelp() string {
 	helpLine := func(key, desc string) string {
 		k := lipgloss.NewStyle().Foreground(teal).Width(10).Render(key)
@@ -1137,10 +1484,16 @@ func renderHelp() string {
 		helpLine("j / ↓", "move down"),
 		helpLine("k / ↑", "move up"),
 		helpLine("enter", "jump to worktree / create"),
+		helpLine("/", "filter list"),
 		"",
 		sectionTitle("Actions"),
 		helpLine("tab", "open actions menu"),
+		helpLine("ctrl+p", "command palette"),
 		helpLine("ctrl+d", "delete worktree + session"),
+		helpLine("r", "refresh"),
+		"",
+		sectionTitle("Modes"),
+		helpLine("g", "toggle global mode"),
 		"",
 		sectionTitle("Other"),
 		helpLine("?", "toggle this help"),
