@@ -1413,7 +1413,7 @@ func (m *model) renderPreviewWithTerminal() string {
 		infoContent = ""
 	}
 
-	terminalPreview := m.renderCompactTerminal(6)
+	terminalPreview := m.renderCompactTerminal(20)
 	if terminalPreview != "" {
 		return terminalPreview + "\n\n" + infoContent
 	}
