@@ -97,9 +97,20 @@ This eliminates orphaned sessions, worktrees without a "home", and manual bookke
 | `enter` | Jump to selected / Create new worktree |
 | `/` | Filter worktrees |
 | `tab` | Actions menu |
+| `ctrl+g` | Grid view (visual session overview) |
 | `ctrl+d` | Quick delete worktree + session |
 | `?` | Help |
 | `q` / `esc` | Quit / Cancel |
+
+### Grid View
+
+| Key | Action |
+|-----|--------|
+| `1-9` | Quick jump to panel |
+| `/` | Start filtering |
+| `enter` | Jump to session / Show orphan menu |
+| `hjkl` / arrows | Navigate panels |
+| `esc` | Clear filter / Exit grid view |
 
 ## Interface
 
@@ -108,6 +119,15 @@ This eliminates orphaned sessions, worktrees without a "home", and manual bookke
 - **Worktrees** with status indicators (green = clean, yellow = changes, purple = staged)
 - **Recent** - Jump to worktrees in other projects
 - **Orphaned Sessions** - Sessions without matching worktrees
+
+### Grid View (`ctrl+g`)
+
+Visual overview of all active sessions:
+- Live terminal previews in a grid layout
+- Sections for sessions and orphaned sessions
+- Available worktrees section (create session with `enter`)
+- Info sidebar with branch, status, and session details
+- Quick jump with number keys (1-9)
 
 ### Preview Panel
 

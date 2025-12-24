@@ -115,6 +115,11 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if target != nil {
+		if target.Create {
+			if err := t.NewSession(target.SessionName, target.Path); err != nil {
+				return fmt.Errorf("failed to create session: %w", err)
+			}
+		}
 		if t.IsInsideTmux() {
 			return t.SwitchClient(target.SessionName)
 		}

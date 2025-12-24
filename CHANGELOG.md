@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.0 — 2025-12-24
+
+### Features
+
+**Grid View** (`ctrl+g`)
+- Visual grid of all active sessions with live terminal previews
+- Section headers separating SESSIONS and ORPHANED SESSIONS
+- Available Worktrees section showing worktrees without sessions
+- Quick jump with number keys (1-9)
+- Vim-style filtering: press `/` to search, `esc` to clear
+- Info sidebar showing status, branch, path, session details
+- Press `enter` on available worktree to create session and jump
+
+**UI Enhancements**
+- Two-line list items with accent bar selection indicator
+- Status badges (`3M 2S`) instead of dots
+- `LIVE` badge for active sessions
+- Preview cards with colored title bars and bordered content
+- Gradient rainbow header divider
+- Gradient panel separator between list and preview
+- macOS-style terminal preview with traffic light dots
+- Contextual accent colors per item type
+- Enhanced help modal with gradient title and styled key badges
+
+### Keybindings
+- `ctrl+g` - Toggle grid view
+- `1-9` - Quick jump to panel (in grid view)
+- `/` - Start filtering (in grid view)
+
 ## 0.1.0 — 2025-12-20
 
 Initial release of treemux.
