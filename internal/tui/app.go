@@ -2372,19 +2372,21 @@ func (m *model) renderGridView() string {
 		availableHeight = 1
 	}
 
-	panelLines := 6
+	panelLines := 7
+	actionItemsLines := 5
+	sectionHeaderLines := 3
 	var selectedLine int
 	sessionsLines := 0
 	if len(sessionPanels) > 0 {
-		sessionsLines = 1 + ((len(sessionPanels)+m.gridCols-1)/m.gridCols)*panelLines
+		sessionsLines = sectionHeaderLines + ((len(sessionPanels)+m.gridCols-1)/m.gridCols)*panelLines
 	}
 	recentLines := 0
 	if len(recentPanels) > 0 {
-		recentLines = 1 + ((len(recentPanels)+m.gridCols-1)/m.gridCols)*panelLines
+		recentLines = sectionHeaderLines + ((len(recentPanels)+m.gridCols-1)/m.gridCols)*panelLines
 	}
 	orphansLines := 0
 	if len(orphanPanels) > 0 {
-		orphansLines = 1 + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
+		orphansLines = sectionHeaderLines + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
 	}
 	noMatchLines := 0
 	if len(filteredPanels) == 0 && m.gridFiltering {
@@ -2392,21 +2394,21 @@ func (m *model) renderGridView() string {
 	}
 	if m.gridInAvailable {
 		availRowIdx := m.gridAvailIdx / m.gridCols
-		selectedLine = sessionsLines + recentLines + orphansLines + noMatchLines + 1 + availRowIdx*panelLines
+		selectedLine = actionItemsLines + sessionsLines + recentLines + orphansLines + noMatchLines + sectionHeaderLines + availRowIdx*panelLines
 	} else if m.gridIndex < 0 {
 		selectedLine = 0
 	} else {
 		if m.gridIndex < len(sessionPanels) {
 			rowIdx := m.gridIndex / m.gridCols
-			selectedLine = 4 + rowIdx*panelLines
+			selectedLine = actionItemsLines + sectionHeaderLines + rowIdx*panelLines
 		} else if m.gridIndex < len(sessionPanels)+len(recentPanels) {
 			recentLocalIdx := m.gridIndex - len(sessionPanels)
 			rowIdx := recentLocalIdx / m.gridCols
-			selectedLine = 4 + sessionsLines + rowIdx*panelLines
+			selectedLine = actionItemsLines + sessionsLines + sectionHeaderLines + rowIdx*panelLines
 		} else {
 			orphanLocalIdx := m.gridIndex - len(sessionPanels) - len(recentPanels)
 			rowIdx := orphanLocalIdx / m.gridCols
-			selectedLine = 4 + sessionsLines + recentLines + rowIdx*panelLines
+			selectedLine = actionItemsLines + sessionsLines + recentLines + sectionHeaderLines + rowIdx*panelLines
 		}
 	}
 
