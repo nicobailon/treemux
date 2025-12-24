@@ -2158,6 +2158,8 @@ func (m *model) renderGridView() string {
 			panelContent := lipgloss.JoinVertical(lipgloss.Left, titleBar, contentArea)
 
 			panelStyle := lipgloss.NewStyle().
+				Width(panelWidth - 2).
+				Height(panelHeight + 2).
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(borderColor)
 
@@ -2167,8 +2169,8 @@ func (m *model) renderGridView() string {
 			if len(currentRow) >= m.gridCols || localIdx == len(panels)-1 {
 				for len(currentRow) < m.gridCols {
 					emptyPanel := lipgloss.NewStyle().
-						Width(panelWidth - 2).
-						Height(panelHeight + 2).
+						Width(panelWidth).
+						Height(panelHeight + 4).
 						Render("")
 					currentRow = append(currentRow, emptyPanel)
 				}
@@ -2251,6 +2253,8 @@ func (m *model) renderGridView() string {
 			panelContent := lipgloss.JoinVertical(lipgloss.Left, titleBar, contentArea)
 
 			panelStyle := lipgloss.NewStyle().
+				Width(panelWidth - 2).
+				Height(panelHeight + 2).
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(borderColor)
 
@@ -2260,8 +2264,8 @@ func (m *model) renderGridView() string {
 			if len(availRow) >= m.gridCols || i == len(m.gridAvailable)-1 {
 				for len(availRow) < m.gridCols {
 					emptyPanel := lipgloss.NewStyle().
-						Width(panelWidth - 2).
-						Height(panelHeight + 2).
+						Width(panelWidth).
+						Height(panelHeight + 4).
 						Render("")
 					availRow = append(availRow, emptyPanel)
 				}
