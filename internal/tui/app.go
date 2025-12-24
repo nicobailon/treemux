@@ -485,6 +485,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		if m.state == stateGridView {
 			m.buildGridPanels()
+			m.gridScrollOffset = 0
+			m.gridIndex = 0
+			m.gridInAvailable = false
 			if len(m.gridPanels) == 0 && len(m.gridAvailable) > 0 {
 				m.gridInAvailable = true
 				m.gridAvailIdx = 0
@@ -514,6 +517,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		if m.state == stateGridView {
 			m.buildGridPanels()
+			m.gridScrollOffset = 0
+			m.gridIndex = 0
+			m.gridInAvailable = false
 			if len(m.gridPanels) == 0 && len(m.gridAvailable) > 0 {
 				m.gridInAvailable = true
 				m.gridAvailIdx = 0
@@ -2017,7 +2023,7 @@ func (m *model) renderGridView() string {
 		m.gridCols = 4
 	}
 	panelWidth := gridWidth / m.gridCols
-	panelHeight := 5
+	panelHeight := 6
 
 	t1 := lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c2e7")).Bold(true)
 	t2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#cba6f7")).Bold(true)
@@ -2083,41 +2089,18 @@ func (m *model) renderGridView() string {
 			globalIdx := indices[localIdx]
 			isSelected := globalIdx == m.gridIndex && !m.gridInAvailable
 
-			var accentColor lipgloss.Color
-			if panel.isOrphan {
-				accentColor = peach
-			} else {
-				accentColor = accent
-			}
-
-			panelStyle := lipgloss.NewStyle().
-				Width(panelWidth - 2).
-				Height(panelHeight).
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(overlayColor)
-
+			borderColor := lipgloss.Color("#45475a")
 			if isSelected {
-				panelStyle = panelStyle.
-					BorderForeground(successColor)
+				borderColor = successColor
 			}
 
-			numBadge := ""
-			if globalIdx < 9 {
-				numStyle := lipgloss.NewStyle().
-					Foreground(overlayColor)
-				if isSelected {
-					numStyle = numStyle.Foreground(successColor).Bold(true)
-				}
-				numBadge = numStyle.Render(fmt.Sprintf("[%d]", globalIdx+1)) + " "
-			}
-
-			nameStyle := lipgloss.NewStyle().Foreground(textColor).Bold(true)
-			if isSelected {
-				nameStyle = nameStyle.Foreground(successColor)
-			}
+			trafficRed := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5f56")).Render("●")
+			trafficYellow := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffbd2e")).Render("●")
+			trafficGreen := lipgloss.NewStyle().Foreground(lipgloss.Color("#27c93f")).Render("●")
+			trafficLights := trafficRed + " " + trafficYellow + " " + trafficGreen
 
 			displayName := panel.name
-			maxNameLen := panelWidth - 10
+			maxNameLen := panelWidth - 16
 			if maxNameLen < 5 {
 				maxNameLen = 5
 			}
@@ -2125,39 +2108,67 @@ func (m *model) renderGridView() string {
 				displayName = displayName[:maxNameLen-1] + "…"
 			}
 
-			titleLine := numBadge + nameStyle.Render(displayName)
+			titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4"))
+			if isSelected {
+				titleStyle = titleStyle.Foreground(successColor).Bold(true)
+			}
+
+			titleBar := lipgloss.NewStyle().
+				Width(panelWidth - 4).
+				Background(lipgloss.Color("#313244")).
+				Padding(0, 1).
+				Render(trafficLights + "  " + titleStyle.Render(displayName))
+
+			numBadge := ""
+			if globalIdx < 9 {
+				numBadge = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#6c7086")).
+					Render(fmt.Sprintf(" %d ", globalIdx+1))
+			}
 
 			branchLine := ""
 			if panel.branch != "" {
 				branchDisplay := panel.branch
-				maxBranchLen := panelWidth - 6
+				maxBranchLen := panelWidth - 8
 				if maxBranchLen < 5 {
 					maxBranchLen = 5
 				}
 				if len(branchDisplay) > maxBranchLen {
 					branchDisplay = branchDisplay[:maxBranchLen-1] + "…"
 				}
-				branchLine = lipgloss.NewStyle().Foreground(accentColor).Render("⎇ " + branchDisplay)
+				branchLine = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Render("  ⎇ " + branchDisplay)
 			}
 
 			statusLine := ""
 			if panel.hasSession {
-				statusLine = lipgloss.NewStyle().Foreground(successColor).Render("● active")
+				statusLine = lipgloss.NewStyle().Foreground(successColor).Render("  ● active")
 				if panel.windows > 0 {
-					statusLine += dimStyle.Render(fmt.Sprintf("  %dw %dp", panel.windows, panel.panes))
+					statusLine += lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")).Render(fmt.Sprintf(" %dw %dp", panel.windows, panel.panes))
 				}
+			} else {
+				statusLine = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")).Render("  ○ no session")
 			}
 
-			content := titleLine + "\n" + branchLine + "\n" + statusLine
-			renderedPanel := panelStyle.Render(content)
+			contentArea := lipgloss.NewStyle().
+				Width(panelWidth - 4).
+				Height(panelHeight - 3).
+				Padding(0, 0).
+				Render(branchLine + "\n" + statusLine + numBadge)
 
+			panelContent := lipgloss.JoinVertical(lipgloss.Left, titleBar, contentArea)
+
+			panelStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(borderColor)
+
+			renderedPanel := panelStyle.Render(panelContent)
 			currentRow = append(currentRow, renderedPanel)
 
 			if len(currentRow) >= m.gridCols || localIdx == len(panels)-1 {
 				for len(currentRow) < m.gridCols {
 					emptyPanel := lipgloss.NewStyle().
 						Width(panelWidth - 2).
-						Height(panelHeight).
+						Height(panelHeight + 2).
 						Render("")
 					currentRow = append(currentRow, emptyPanel)
 				}
@@ -2190,23 +2201,15 @@ func (m *model) renderGridView() string {
 		for i, panel := range m.gridAvailable {
 			isSelected := m.gridInAvailable && i == m.gridAvailIdx
 
-			panelStyle := lipgloss.NewStyle().
-				Width(panelWidth - 2).
-				Height(panelHeight).
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(overlayColor)
-
+			borderColor := lipgloss.Color("#45475a")
 			if isSelected {
-				panelStyle = panelStyle.BorderForeground(successColor)
+				borderColor = successColor
 			}
 
-			nameStyle := lipgloss.NewStyle().Foreground(dimColor)
-			if isSelected {
-				nameStyle = lipgloss.NewStyle().Foreground(successColor).Bold(true)
-			}
+			trafficDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")).Render("● ● ●")
 
 			displayName := panel.name
-			maxNameLen := panelWidth - 6
+			maxNameLen := panelWidth - 14
 			if maxNameLen < 5 {
 				maxNameLen = 5
 			}
@@ -2214,32 +2217,51 @@ func (m *model) renderGridView() string {
 				displayName = displayName[:maxNameLen-1] + "…"
 			}
 
-			titleLine := nameStyle.Render(displayName)
+			titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
+			if isSelected {
+				titleStyle = titleStyle.Foreground(successColor).Bold(true)
+			}
+
+			titleBar := lipgloss.NewStyle().
+				Width(panelWidth - 4).
+				Background(lipgloss.Color("#1e1e2e")).
+				Padding(0, 1).
+				Render(trafficDim + "  " + titleStyle.Render(displayName))
 
 			branchLine := ""
 			if panel.branch != "" {
 				branchDisplay := panel.branch
-				maxBranchLen := panelWidth - 6
+				maxBranchLen := panelWidth - 8
 				if maxBranchLen < 5 {
 					maxBranchLen = 5
 				}
 				if len(branchDisplay) > maxBranchLen {
 					branchDisplay = branchDisplay[:maxBranchLen-1] + "…"
 				}
-				branchLine = dimStyle.Render("⎇ " + branchDisplay)
+				branchLine = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")).Render("  ⎇ " + branchDisplay)
 			}
 
-			statusLine := lipgloss.NewStyle().Foreground(overlayColor).Render("○ inactive")
-			content := titleLine + "\n" + branchLine + "\n" + statusLine
-			renderedPanel := panelStyle.Render(content)
+			statusLine := lipgloss.NewStyle().Foreground(lipgloss.Color("#45475a")).Render("  ○ no session")
 
+			contentArea := lipgloss.NewStyle().
+				Width(panelWidth - 4).
+				Height(panelHeight - 3).
+				Render(branchLine + "\n" + statusLine)
+
+			panelContent := lipgloss.JoinVertical(lipgloss.Left, titleBar, contentArea)
+
+			panelStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(borderColor)
+
+			renderedPanel := panelStyle.Render(panelContent)
 			availRow = append(availRow, renderedPanel)
 
 			if len(availRow) >= m.gridCols || i == len(m.gridAvailable)-1 {
 				for len(availRow) < m.gridCols {
 					emptyPanel := lipgloss.NewStyle().
 						Width(panelWidth - 2).
-						Height(panelHeight).
+						Height(panelHeight + 2).
 						Render("")
 					availRow = append(availRow, emptyPanel)
 				}
