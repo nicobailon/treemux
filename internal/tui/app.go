@@ -144,7 +144,6 @@ type model struct {
 	gridIndex        int
 	gridCols         int
 	gridPanels       []gridPanel
-	gridRecent       []gridPanel
 	gridAvailable    []gridPanel
 	gridFilter       string
 	gridFiltering    bool
@@ -1579,7 +1578,6 @@ func (m *model) getFilteredGridPanels() []gridPanel {
 
 func (m *model) buildGridPanels() {
 	m.gridPanels = []gridPanel{}
-	m.gridRecent = []gridPanel{}
 	m.gridAvailable = []gridPanel{}
 	m.gridInAvailable = false
 	m.gridAvailIdx = 0
