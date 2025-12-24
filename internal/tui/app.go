@@ -1117,6 +1117,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "tab":
+			if m.state == stateGridDetail && m.gridDetailPanel != nil {
+				maxIdx := 0
+				if m.gridDetailPanel.hasSession {
+					maxIdx = 1
+				}
+				if m.gridDetailPanel.isOrphan {
+					maxIdx = 2
+				}
+				m.gridDetailIdx++
+				if m.gridDetailIdx > maxIdx {
+					m.gridDetailIdx = 0
+				}
+				return m, nil
+			}
 			if m.state == stateGridView {
 				filteredLen := len(m.getFilteredGridPanels())
 				totalItems := filteredLen + len(m.gridAvailable)
@@ -2452,7 +2466,7 @@ func (m *model) renderGridDetail() string {
 		BorderForeground(lipgloss.Color("#45475a")).
 		Render(modalContent)
 
-	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")).Render("j/k navigate  enter confirm  esc back")
+	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")).Render("↑↓/tab navigate  enter confirm  esc back")
 
 	modalWithHint := lipgloss.JoinVertical(lipgloss.Center, modal, "", hint)
 
