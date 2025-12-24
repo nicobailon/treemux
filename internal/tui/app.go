@@ -1057,7 +1057,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if panel.hasSession {
 						m.jumpTarget = &JumpTarget{SessionName: panel.sessionName, Path: panel.path}
 					} else {
-						sessionName := filepath.Base(panel.name)
+						sessionName := panel.sessionName
+						if sessionName == "" {
+							sessionName = filepath.Base(panel.name)
+						}
 						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: panel.path, Create: true}
 					}
 					return m, tea.Quit
@@ -2392,18 +2395,20 @@ func (m *model) renderGridView() string {
 	if m.gridInAvailable {
 		availRowIdx := m.gridAvailIdx / m.gridCols
 		selectedLine = sessionsLines + recentLines + orphansLines + noMatchLines + 1 + availRowIdx*panelLines
+	} else if m.gridIndex < 0 {
+		selectedLine = 0
 	} else {
 		if m.gridIndex < len(sessionPanels) {
 			rowIdx := m.gridIndex / m.gridCols
-			selectedLine = 1 + rowIdx*panelLines
+			selectedLine = 4 + rowIdx*panelLines
 		} else if m.gridIndex < len(sessionPanels)+len(recentPanels) {
 			recentLocalIdx := m.gridIndex - len(sessionPanels)
 			rowIdx := recentLocalIdx / m.gridCols
-			selectedLine = sessionsLines + 1 + rowIdx*panelLines
+			selectedLine = 4 + sessionsLines + rowIdx*panelLines
 		} else {
 			orphanLocalIdx := m.gridIndex - len(sessionPanels) - len(recentPanels)
 			rowIdx := orphanLocalIdx / m.gridCols
-			selectedLine = sessionsLines + recentLines + 1 + rowIdx*panelLines
+			selectedLine = 4 + sessionsLines + recentLines + rowIdx*panelLines
 		}
 	}
 
