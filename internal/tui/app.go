@@ -144,6 +144,7 @@ type model struct {
 	gridIndex        int
 	gridCols         int
 	gridPanels       []gridPanel
+	gridRecent       []gridPanel
 	gridAvailable    []gridPanel
 	gridFilter       string
 	gridFiltering    bool
@@ -163,6 +164,7 @@ type gridPanel struct {
 	content     string
 	hasSession  bool
 	isOrphan    bool
+	isRecent    bool
 	modified    int
 	staged      int
 	windows     int
@@ -1489,6 +1491,7 @@ func (m *model) getFilteredGridPanels() []gridPanel {
 
 func (m *model) buildGridPanels() {
 	m.gridPanels = []gridPanel{}
+	m.gridRecent = []gridPanel{}
 	m.gridAvailable = []gridPanel{}
 	m.gridInAvailable = false
 	m.gridAvailIdx = 0
@@ -1553,7 +1556,30 @@ func (m *model) buildGridPanels() {
 			}
 		}
 	}
-	
+
+	if !m.globalMode {
+		for _, r := range m.recentEntries {
+			sessionName := r.SessionName
+			if sessionName == "" {
+				sessionName = r.Worktree
+			}
+			panel := gridPanel{
+				name:        r.RepoName + "/" + r.Worktree,
+				sessionName: sessionName,
+				path:        r.Path,
+				hasSession:  m.tmux.HasSession(sessionName),
+				isRecent:    true,
+			}
+			if panel.hasSession {
+				if info, err := m.tmux.SessionInfo(sessionName); err == nil && info != nil {
+					panel.windows = info.Windows
+					panel.panes = info.Panes
+				}
+			}
+			m.gridRecent = append(m.gridRecent, panel)
+		}
+	}
+
 	sortedOrphans := make([]string, len(m.orphans))
 	copy(sortedOrphans, m.orphans)
 	sort.Strings(sortedOrphans)
@@ -2184,6 +2210,24 @@ func (m *model) renderGridView() string {
 		gridSections = append(gridSections, renderSectionHeader("SESSIONS"))
 		gridSections = append(gridSections, renderPanelGrid(worktreePanels, worktreeIndices, true))
 	}
+	if len(m.gridRecent) > 0 {
+		gridSections = append(gridSections, renderSectionHeader("RECENT"))
+		recentIndices := make(map[int]int)
+		for i := range m.gridRecent {
+			recentIndices[i] = i + 100
+		}
+		var recentRows []string
+		var recentRow []string
+		for i, panel := range m.gridRecent {
+			renderedPanel := renderPanel(panel, i+100, false, panel.hasSession)
+			recentRow = append(recentRow, renderedPanel)
+			if len(recentRow) >= m.gridCols || i == len(m.gridRecent)-1 {
+				recentRows = append(recentRows, lipgloss.JoinHorizontal(lipgloss.Top, recentRow...))
+				recentRow = []string{}
+			}
+		}
+		gridSections = append(gridSections, lipgloss.JoinVertical(lipgloss.Left, recentRows...))
+	}
 	if len(orphanPanels) > 0 {
 		gridSections = append(gridSections, renderSectionHeader("ORPHANED SESSIONS"))
 		gridSections = append(gridSections, renderPanelGrid(orphanPanels, orphanIndices, true))
@@ -2223,9 +2267,13 @@ func (m *model) renderGridView() string {
 	if len(worktreePanels) > 0 {
 		sessionsLines = 1 + ((len(worktreePanels)+m.gridCols-1)/m.gridCols)*panelLines
 	}
+	recentLines := 0
+	if len(m.gridRecent) > 0 {
+		recentLines = 1 + ((len(m.gridRecent)+m.gridCols-1)/m.gridCols)*panelLines
+	}
 	orphansLines := 0
 	if len(orphanPanels) > 0 {
-		orphansLines = 2 + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
+		orphansLines = 1 + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
 	}
 	noMatchLines := 0
 	if len(filteredPanels) == 0 && m.gridFiltering {
@@ -2233,7 +2281,7 @@ func (m *model) renderGridView() string {
 	}
 	if m.gridInAvailable {
 		availRowIdx := m.gridAvailIdx / m.gridCols
-		selectedLine = sessionsLines + orphansLines + noMatchLines + 2 + availRowIdx*panelLines
+		selectedLine = sessionsLines + recentLines + orphansLines + noMatchLines + 1 + availRowIdx*panelLines
 	} else {
 		if m.gridIndex < len(worktreePanels) {
 			rowIdx := m.gridIndex / m.gridCols
@@ -2241,7 +2289,7 @@ func (m *model) renderGridView() string {
 		} else {
 			orphanLocalIdx := m.gridIndex - len(worktreePanels)
 			rowIdx := orphanLocalIdx / m.gridCols
-			selectedLine = sessionsLines + 2 + rowIdx*panelLines
+			selectedLine = sessionsLines + recentLines + 1 + rowIdx*panelLines
 		}
 	}
 
