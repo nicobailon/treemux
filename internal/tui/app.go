@@ -1213,29 +1213,46 @@ func (m model) View() string {
 		t3.Render("u") +
 		t4.Render("x")
 
-	modeIndicator := ""
+	repoIndicator := ""
 	if m.globalMode {
-		modeIndicator = "  " + warnStyle.Render("[GLOBAL]")
+		repoIndicator = warnStyle.Render("GLOBAL")
+	} else if m.svc != nil && m.svc.Git != nil {
+		repoName := filepath.Base(m.svc.Git.RepoRoot)
+		repoIndicator = sectionStyle.Render(repoName)
 	}
 
+	headerWidth := m.width - 6
+	if headerWidth < 20 {
+		headerWidth = 20
+	}
+	titleLen := 12
+	repoLen := len(repoIndicator)
+	padding := headerWidth - titleLen - repoLen
+	if padding < 1 {
+		padding = 1
+	}
+
+	headerLine := gradientTitle + strings.Repeat(" ", padding) + repoIndicator
+	dividerLine := dimStyle.Render(strings.Repeat("─", headerWidth))
+
 	headerBox := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(overlayColor).
 		Padding(0, 2).
 		MarginTop(1).
-		Width(m.width - 4).
-		Render(gradientTitle + "  " + dimStyle.Render("git worktrees + tmux sessions") + modeIndicator)
+		Render(headerLine + "\n" + dividerLine)
 
 	toggleHint := keyStyle.Render("g") + dimStyle.Render(" global  ")
 	if m.globalMode {
 		toggleHint = keyStyle.Render("g") + dimStyle.Render(" repo  ")
 	}
 
+	sep := dimStyle.Render(" │ ")
 	footer := footerStyle.Render(
 		keyStyle.Render("enter") + dimStyle.Render(" select  ") +
-			keyStyle.Render("/") + dimStyle.Render(" filter  ") +
+			keyStyle.Render("/") + dimStyle.Render(" filter") +
+			sep +
 			keyStyle.Render("ctrl+p") + dimStyle.Render(" commands  ") +
 			toggleHint +
+			sep +
 			keyStyle.Render("?") + dimStyle.Render(" help  ") +
 			keyStyle.Render("q") + dimStyle.Render(" quit"),
 	)
@@ -1263,13 +1280,16 @@ func buildItems(states []workspace.WorktreeState, orphans []string, recentEntrie
 		title: "+ Create new worktree ...",
 		kind:  kindCreate,
 	})
-	for _, st := range states {
-		items = append(items, listItem{
-			title:     st.Worktree.Name,
-			kind:      kindWorktree,
-			data:      st,
-			isCurrent: st.Worktree.Path == currentPath,
-		})
+	if len(states) > 0 {
+		items = append(items, listItem{title: "WORKTREES", kind: kindHeader})
+		for _, st := range states {
+			items = append(items, listItem{
+				title:     st.Worktree.Name,
+				kind:      kindWorktree,
+				data:      st,
+				isCurrent: st.Worktree.Path == currentPath,
+			})
+		}
 	}
 	if len(recentEntries) > 0 {
 		items = append(items, listItem{kind: kindSeparator})
@@ -1423,34 +1443,39 @@ func (m *model) renderPreviewWithTerminal() string {
 func (m *model) renderCreatePreview() string {
 	title := sectionStyle.Render(iconCreate + " New Worktree")
 	steps := []string{
-		dimStyle.Render("1.") + " " + textStyle.Render("Select base branch"),
+		sectionStyle.Render("1.") + " " + textStyle.Render("Select base branch"),
 		dimStyle.Render("2.") + " " + textStyle.Render("Create worktree"),
 		dimStyle.Render("3.") + " " + textStyle.Render("Start tmux session"),
 	}
-	hint := dimStyle.Render("Press enter to begin")
-	return title + "\n\n" + strings.Join(steps, "\n") + "\n\n" + hint
+	stepsCard := m.renderCard("Workflow", strings.Join(steps, "\n"))
+	hint := dimStyle.Render("enter") + " " + subTextStyle.Render("begin")
+	return title + "\n\n" + stepsCard + "\n\n" + hint
 }
 
 func (m *model) renderGlobalCreatePreview() string {
 	title := sectionStyle.Render(iconCreate + " New Worktree")
 	steps := []string{
-		dimStyle.Render("1.") + " " + textStyle.Render("Select repository"),
+		sectionStyle.Render("1.") + " " + textStyle.Render("Select repository"),
 		dimStyle.Render("2.") + " " + textStyle.Render("Select base branch"),
 		dimStyle.Render("3.") + " " + textStyle.Render("Create worktree"),
 		dimStyle.Render("4.") + " " + textStyle.Render("Start tmux session"),
 	}
-	hint := dimStyle.Render("Press enter to begin")
-	return title + "\n\n" + strings.Join(steps, "\n") + "\n\n" + hint
+	stepsCard := m.renderCard("Workflow", strings.Join(steps, "\n"))
+	hint := dimStyle.Render("enter") + " " + subTextStyle.Render("begin")
+	return title + "\n\n" + stepsCard + "\n\n" + hint
 }
 
 func (m *model) renderOrphanPreview(name string) string {
 	title := warnStyle.Render(iconOrphan + " Orphaned Session")
-	nameDisplay := m.truncatePath(name, m.preview.Width-4)
-	info := textStyle.Render(nameDisplay)
-	warning := dimStyle.Render("No matching worktree")
-	hint := dimStyle.Render("enter") + subTextStyle.Render(" jump  ") +
-		dimStyle.Render("tab") + subTextStyle.Render(" actions")
-	return title + "\n\n" + info + "\n" + warning + "\n\n" + hint
+	nameDisplay := m.truncatePath(name, m.preview.Width-8)
+	infoLines := []string{
+		m.kvLine("Session", textStyle.Render(nameDisplay)),
+		m.kvLine("Status", warnStyle.Render("No matching worktree")),
+	}
+	infoCard := m.renderCard(iconSession+" Details", strings.Join(infoLines, "\n"))
+	hint := dimStyle.Render("enter") + " " + subTextStyle.Render("jump") + "  " +
+		dimStyle.Render("tab") + " " + subTextStyle.Render("actions")
+	return title + "\n\n" + infoCard + "\n\n" + hint
 }
 
 func (m *model) renderRecentPreview(r recent.Entry) string {
@@ -1471,16 +1496,14 @@ func (m *model) renderRecentPreview(r recent.Entry) string {
 		pathDisplay = "..." + pathDisplay[len(pathDisplay)-maxW+3:]
 	}
 
-	lines := []string{
-		title,
-		"",
-		dimStyle.Render("Worktree") + "  " + textStyle.Render(worktree),
-		dimStyle.Render("Session ") + "  " + textStyle.Render(r.SessionName),
-		dimStyle.Render("Path    ") + "  " + subTextStyle.Render(pathDisplay),
-		"",
-		dimStyle.Render("enter") + subTextStyle.Render(" switch to session"),
+	infoLines := []string{
+		m.kvLine("Worktree", textStyle.Render(worktree)),
+		m.kvLine("Session", textStyle.Render(r.SessionName)),
+		m.kvLine("Path", subTextStyle.Render(pathDisplay)),
 	}
-	return strings.Join(lines, "\n")
+	infoCard := m.renderCard(iconBranch+" Details", strings.Join(infoLines, "\n"))
+	hint := dimStyle.Render("enter") + " " + subTextStyle.Render("switch to session")
+	return title + "\n\n" + infoCard + "\n\n" + hint
 }
 
 func (m *model) renderWorktreePreviewNew(wt workspace.WorktreeState) string {
@@ -1515,12 +1538,10 @@ func (m *model) renderWorktreePreviewNew(wt workspace.WorktreeState) string {
 		}
 	}
 
-	lines := []string{
-		title,
-		"",
-		dimStyle.Render("Branch") + "  " + textStyle.Render(wt.Worktree.Branch),
-		dimStyle.Render("Status") + "  " + statusText,
-		dimStyle.Render("Path  ") + "  " + subTextStyle.Render(pathDisplay),
+	statusLines := []string{
+		m.kvLine("Branch", textStyle.Render(wt.Worktree.Branch)),
+		m.kvLine("Status", statusText),
+		m.kvLine("Path", subTextStyle.Render(pathDisplay)),
 	}
 
 	if wt.Ahead > 0 || wt.Behind > 0 {
@@ -1534,40 +1555,53 @@ func (m *model) renderWorktreePreviewNew(wt workspace.WorktreeState) string {
 			}
 			sync += warnStyle.Render(fmt.Sprintf("%d behind", wt.Behind))
 		}
-		lines = append(lines, dimStyle.Render("Sync  ")+"  "+sync)
+		statusLines = append(statusLines, m.kvLine("Sync", sync))
 	}
 
+	statusCard := m.renderCard(iconBranch+" Status", strings.Join(statusLines, "\n"))
+
+	var sessionCard string
 	if wt.SessionInfo != nil {
+		sessionLines := []string{}
 		sessionInfo := fmt.Sprintf("%d windows, %d panes", wt.SessionInfo.Windows, wt.SessionInfo.Panes)
 		if wt.SessionInfo.IsActive {
 			sessionInfo += " " + successStyle.Render("● active")
 		}
-		lines = append(lines, dimStyle.Render("Tmux  ")+"  "+textStyle.Render(sessionInfo))
-	}
+		sessionLines = append(sessionLines, textStyle.Render(sessionInfo))
 
-	if len(wt.Processes) > 0 && len(wt.Processes) <= 3 {
-		lines = append(lines, "")
-		lines = append(lines, dimStyle.Render("Running"))
-		for _, p := range wt.Processes {
-			status := ClassifyProcess(p)
-			var style lipgloss.Style
-			switch status {
-			case ProcessServer:
-				style = successStyle
-			case ProcessBuilding:
-				style = warnStyle
-			default:
-				style = subTextStyle
+		if len(wt.Processes) > 0 && len(wt.Processes) <= 3 {
+			sessionLines = append(sessionLines, "")
+			for _, p := range wt.Processes {
+				status := ClassifyProcess(p)
+				var style lipgloss.Style
+				switch status {
+				case ProcessServer:
+					style = successStyle
+				case ProcessBuilding:
+					style = warnStyle
+				default:
+					style = subTextStyle
+				}
+				sessionLines = append(sessionLines, style.Render(status.Icon()+" "+p))
 			}
-			lines = append(lines, "  "+style.Render(status.Icon()+" "+p))
 		}
+		sessionCard = m.renderCard(iconSession+" Session", strings.Join(sessionLines, "\n"))
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, dimStyle.Render("enter")+" "+subTextStyle.Render("jump")+"  "+
-		dimStyle.Render("tab")+" "+subTextStyle.Render("actions"))
+	hint := dimStyle.Render("enter") + " " + subTextStyle.Render("jump") + "  " +
+		dimStyle.Render("tab") + " " + subTextStyle.Render("actions")
 
-	return strings.Join(lines, "\n")
+	sections := []string{title, "", statusCard}
+	if sessionCard != "" {
+		sections = append(sections, "", sessionCard)
+	}
+	sections = append(sections, "", hint)
+
+	return strings.Join(sections, "\n")
+}
+
+func (m *model) kvLine(key, value string) string {
+	return dimStyle.Render(fmt.Sprintf("%-8s", key)) + value
 }
 
 func (m *model) renderGlobalPreview(wt scanner.RepoWorktree) string {
@@ -1583,16 +1617,16 @@ func (m *model) renderGlobalPreview(wt scanner.RepoWorktree) string {
 		pathDisplay = "..." + pathDisplay[len(pathDisplay)-maxW+3:]
 	}
 
-	lines := []string{
-		title,
-		"",
-		dimStyle.Render("Worktree") + "  " + textStyle.Render(wt.Worktree.Name),
-		dimStyle.Render("Branch  ") + "  " + textStyle.Render(wt.Worktree.Branch),
-		dimStyle.Render("Path    ") + "  " + subTextStyle.Render(pathDisplay),
-		"",
-		dimStyle.Render("enter") + subTextStyle.Render(" jump to worktree"),
+	infoLines := []string{
+		m.kvLine("Worktree", textStyle.Render(wt.Worktree.Name)),
+		m.kvLine("Branch", textStyle.Render(wt.Worktree.Branch)),
+		m.kvLine("Path", subTextStyle.Render(pathDisplay)),
 	}
-	return strings.Join(lines, "\n")
+
+	infoCard := m.renderCard(iconBranch+" Details", strings.Join(infoLines, "\n"))
+	hint := dimStyle.Render("enter") + " " + subTextStyle.Render("jump to worktree")
+
+	return strings.Join([]string{title, "", infoCard, "", hint}, "\n")
 }
 
 func (m *model) truncatePath(path string, maxLen int) string {
@@ -1603,6 +1637,22 @@ func (m *model) truncatePath(path string, maxLen int) string {
 		return path
 	}
 	return "..." + path[len(path)-maxLen+3:]
+}
+
+func (m *model) renderCard(title string, content string) string {
+	cardWidth := m.preview.Width - 4
+	if cardWidth < 20 {
+		cardWidth = 20
+	}
+	
+	headerStyle := lipgloss.NewStyle().Foreground(teal).Bold(true)
+	cardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(overlayColor).
+		Padding(0, 1).
+		Width(cardWidth)
+	
+	return headerStyle.Render(title) + "\n" + cardStyle.Render(content)
 }
 
 func renderMenu(title string, m *list.Model) string {
@@ -1838,6 +1888,14 @@ var (
 				Background(surfaceBg).
 				Foreground(warnColor).
 				Bold(true)
+	accentStyle = lipgloss.NewStyle().
+			Foreground(accent).
+			Bold(true)
+	liveBadgeStyle = lipgloss.NewStyle().
+			Background(successColor).
+			Foreground(baseBg).
+			Bold(true).
+			Padding(0, 1)
 )
 
 func sectionTitle(s string) string {
@@ -1849,7 +1907,7 @@ type itemDelegate struct {
 	listWidth int
 }
 
-func (d itemDelegate) Height() int                             { return 1 }
+func (d itemDelegate) Height() int                             { return 2 }
 func (d itemDelegate) Spacing() int                            { return 0 }
 func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 
@@ -1861,120 +1919,183 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 
 	selected := index == m.Index()
 	width := d.listWidth - 4
+	if width < 20 {
+		width = 20
+	}
 
-	var line string
+	accentBar := dimStyle.Render("  ")
+	if selected {
+		accentBar = accentStyle.Render("▌ ")
+	}
+
+	var line1, line2 string
+
 	switch i.kind {
 	case kindCreate:
-		text := "+ Create new worktree ..."
-		padded := fmt.Sprintf("%-*s", width, text)
 		if selected {
-			line = selectedStyle.Render(padded)
+			line1 = accentBar + selectedStyle.Render("+ New Worktree")
+			line2 = accentBar + selectedBranchStyle.Render("  Create worktree and session")
 		} else {
-			line = textStyle.Render(text)
+			line1 = accentBar + textStyle.Render("+ New Worktree")
+			line2 = accentBar + dimStyle.Render("  Create worktree and session")
 		}
+
 	case kindWorktree:
 		wt := i.data.(workspace.WorktreeState)
 		name := wt.Worktree.Name
 		branch := wt.Worktree.Branch
 
-		statusDot := successStyle.Render("●")
+		statusBadge := successStyle.Render(iconClean)
 		if wt.Status != nil && !wt.Status.Clean {
+			badgeParts := []string{}
+			if wt.Status.Modified > 0 {
+				badgeParts = append(badgeParts, warnStyle.Render(fmt.Sprintf("%dM", wt.Status.Modified)))
+			}
 			if wt.Status.Staged > 0 {
-				statusDot = sectionStyle.Render("●")
-			} else {
-				statusDot = warnStyle.Render("●")
+				badgeParts = append(badgeParts, sectionStyle.Render(fmt.Sprintf("%dS", wt.Status.Staged)))
+			}
+			if len(badgeParts) > 0 {
+				statusBadge = strings.Join(badgeParts, " ")
+			} else if wt.Status.Untracked > 0 {
+				statusBadge = dimStyle.Render(fmt.Sprintf("%d?", wt.Status.Untracked))
 			}
 		}
 
-		sessionIcon := ""
-		if wt.HasSession {
-			if wt.SessionInfo != nil && wt.SessionInfo.IsActive {
-				sessionIcon = " " + successStyle.Render(iconSession)
-			} else {
-				sessionIcon = " " + dimStyle.Render(iconSession)
-			}
-		}
-
-		suffix := branch + sessionIcon
-		nameWidth := width - len(branch) - 6
-		if nameWidth < 10 {
-			nameWidth = 10
-		}
-
-		indicator := "  "
+		indicator := " "
 		if i.isCurrent {
-			indicator = iconCurrent + " "
+			indicator = iconCurrent
 		}
 
-		paddedName := fmt.Sprintf("%-*s", nameWidth, indicator+name)
+		sessionInfo := ""
+		if wt.SessionInfo != nil {
+			if wt.SessionInfo.IsActive {
+				sessionInfo = " " + liveBadgeStyle.Render("LIVE")
+			} else {
+				sessionInfo = dimStyle.Render(fmt.Sprintf(" %dw %dp", wt.SessionInfo.Windows, wt.SessionInfo.Panes))
+			}
+		}
+
+		nameDisplay := name
+		maxNameWidth := width - 14
+		if maxNameWidth < 10 {
+			maxNameWidth = 10
+		}
+		if len(nameDisplay) > maxNameWidth {
+			nameDisplay = nameDisplay[:maxNameWidth-1] + "…"
+		}
+
+		branchDisplay := branch
+		maxBranchWidth := width - 16
+		if maxBranchWidth < 10 {
+			maxBranchWidth = 10
+		}
+		if len(branchDisplay) > maxBranchWidth {
+			branchDisplay = branchDisplay[:maxBranchWidth-1] + "…"
+		}
+
 		if selected {
-			fullLine := statusDot + " " + paddedName + "  " + suffix
-			padded := fmt.Sprintf("%-*s", width, fullLine)
-			line = selectedStyle.Render(padded)
+			line1 = accentBar + selectedStyle.Render(indicator+" "+nameDisplay) + "  " + statusBadge
+			line2 = accentBar + "    " + selectedBranchStyle.Render(iconBranch+" "+branchDisplay) + sessionInfo
 		} else {
-			line = statusDot + " " + textStyle.Render(paddedName) + "  " + branchStyle.Render(suffix)
+			line1 = accentBar + textStyle.Render(indicator+" "+nameDisplay) + "  " + statusBadge
+			line2 = accentBar + "    " + branchStyle.Render(iconBranch+" "+branchDisplay) + sessionInfo
 		}
+
 	case kindSeparator:
-		line = separatorStyle.Render(strings.Repeat("─", width))
+		line1 = ""
+		line2 = ""
+
 	case kindHeader:
+		label := i.title
 		suffix := ""
+		labelStyle := sectionStyle
 		if i.title == "ORPHANED SESSIONS" {
-			suffix = " " + dimStyle.Render("(no worktree)")
+			suffix = " (no worktree)"
+			labelStyle = warnStyle
 		} else if i.title == "RECENT" {
-			suffix = " " + dimStyle.Render("(other projects)")
+			suffix = " (other projects)"
 		}
-		line = orphanHeaderStyle.Render(i.title + suffix)
+		fullLabel := " " + label + suffix + " "
+		labelLen := len(label) + len(suffix) + 2
+		sideLen := (width - labelLen) / 2
+		if sideLen < 2 {
+			sideLen = 2
+		}
+		leftBar := strings.Repeat("─", sideLen)
+		rightBar := strings.Repeat("─", sideLen)
+		line1 = dimStyle.Render(leftBar) + labelStyle.Render(fullLabel) + dimStyle.Render(rightBar)
+		line2 = ""
+
 	case kindOrphan:
 		name := i.title
-		label := "orphan"
-		nameWidth := width - len(label) - 5
-		if nameWidth < 10 {
-			nameWidth = 10
-		}
-		paddedName := fmt.Sprintf("%-*s", nameWidth, name)
 		if selected {
-			fullLine := "   " + paddedName + "  " + label
-			padded := fmt.Sprintf("%-*s", width, fullLine)
-			line = selectedOrphanStyle.Render(padded)
+			line1 = accentBar + warnStyle.Render(iconSession+" "+name)
+			line2 = accentBar + "    " + selectedBranchStyle.Render("orphaned session")
 		} else {
-			line = "   " + warnStyle.Render(paddedName) + "  " + dimStyle.Render(label)
+			line1 = accentBar + warnStyle.Render(iconSession+" "+name)
+			line2 = accentBar + "    " + dimStyle.Render("orphaned session")
 		}
+
 	case kindRecent:
 		name := i.title
-		label := "other project"
-		nameWidth := width - len(label) - 5
-		if nameWidth < 10 {
-			nameWidth = 10
-		}
-		paddedName := fmt.Sprintf("%-*s", nameWidth, name)
 		if selected {
-			fullLine := "   " + paddedName + "  " + label
-			padded := fmt.Sprintf("%-*s", width, fullLine)
-			line = selectedStyle.Render(padded)
+			line1 = accentBar + selectedStyle.Render(iconJump+" "+name)
+			line2 = accentBar + "    " + selectedBranchStyle.Render("recent project")
 		} else {
-			line = "   " + sectionStyle.Render(paddedName) + "  " + dimStyle.Render(label)
+			line1 = accentBar + sectionStyle.Render(iconJump+" "+name)
+			line2 = accentBar + "    " + dimStyle.Render("recent project")
 		}
+
 	case kindRepoHeader:
-		line = sectionStyle.Render(i.title)
+		label := i.title
+		fullLabel := " " + iconPath + " " + label + " "
+		labelLen := len(label) + 5
+		sideLen := (width - labelLen) / 2
+		if sideLen < 2 {
+			sideLen = 2
+		}
+		leftBar := strings.Repeat("─", sideLen)
+		rightBar := strings.Repeat("─", sideLen)
+		line1 = dimStyle.Render(leftBar) + sectionStyle.Render(fullLabel) + dimStyle.Render(rightBar)
+		line2 = ""
+
 	case kindGlobal:
 		wt := i.data.(scanner.RepoWorktree)
 		name := wt.Worktree.Name
 		branch := wt.Worktree.Branch
-		nameWidth := width - len(branch) - 6
-		if nameWidth < 10 {
-			nameWidth = 10
+
+		nameDisplay := name
+		maxNameWidth := width - 8
+		if maxNameWidth < 10 {
+			maxNameWidth = 10
 		}
-		paddedName := fmt.Sprintf("   %-*s", nameWidth, name)
+		if len(nameDisplay) > maxNameWidth {
+			nameDisplay = nameDisplay[:maxNameWidth-1] + "…"
+		}
+
+		branchDisplay := branch
+		maxBranchWidth := width - 12
+		if maxBranchWidth < 10 {
+			maxBranchWidth = 10
+		}
+		if len(branchDisplay) > maxBranchWidth {
+			branchDisplay = branchDisplay[:maxBranchWidth-1] + "…"
+		}
+
 		if selected {
-			fullLine := paddedName + "  " + branch
-			padded := fmt.Sprintf("%-*s", width, fullLine)
-			line = selectedStyle.Render(padded)
+			line1 = accentBar + selectedStyle.Render(iconWorktree+" "+nameDisplay)
+			line2 = accentBar + "    " + selectedBranchStyle.Render(iconBranch+" "+branchDisplay)
 		} else {
-			line = textStyle.Render(paddedName) + "  " + branchStyle.Render(branch)
+			line1 = accentBar + textStyle.Render(iconWorktree+" "+nameDisplay)
+			line2 = accentBar + "    " + branchStyle.Render(iconBranch+" "+branchDisplay)
 		}
 	}
 
-	fmt.Fprint(w, line)
+	if line2 != "" {
+		fmt.Fprint(w, line1+"\n"+line2)
+	} else {
+		fmt.Fprint(w, line1+"\n")
+	}
 }
 
 func newItemDelegate(width int) itemDelegate {
