@@ -1233,7 +1233,19 @@ func (m model) View() string {
 	}
 
 	headerLine := gradientTitle + strings.Repeat(" ", padding) + repoIndicator
-	dividerLine := dimStyle.Render(strings.Repeat("─", headerWidth))
+	
+	gradientChars := "━"
+	dividerParts := []string{}
+	colors := []lipgloss.Color{"#f5c2e7", "#cba6f7", "#b4befe", "#89b4fa", "#94e2d5"}
+	segmentLen := headerWidth / len(colors)
+	for i, c := range colors {
+		length := segmentLen
+		if i == len(colors)-1 {
+			length = headerWidth - (segmentLen * (len(colors) - 1))
+		}
+		dividerParts = append(dividerParts, lipgloss.NewStyle().Foreground(c).Render(strings.Repeat(gradientChars, length)))
+	}
+	dividerLine := strings.Join(dividerParts, "")
 
 	headerBox := lipgloss.NewStyle().
 		Padding(0, 2).
@@ -1245,25 +1257,35 @@ func (m model) View() string {
 		toggleHint = keyStyle.Render("g") + dimStyle.Render(" repo  ")
 	}
 
-	sep := dimStyle.Render(" │ ")
-	footer := footerStyle.Render(
-		keyStyle.Render("enter") + dimStyle.Render(" select  ") +
-			keyStyle.Render("/") + dimStyle.Render(" filter") +
-			sep +
-			keyStyle.Render("ctrl+p") + dimStyle.Render(" commands  ") +
-			toggleHint +
-			sep +
-			keyStyle.Render("?") + dimStyle.Render(" help  ") +
-			keyStyle.Render("q") + dimStyle.Render(" quit"),
-	)
+	sep := lipgloss.NewStyle().Foreground(overlayColor).Render(" ┃ ")
+	footerContent := keyStyle.Render("enter") + dimStyle.Render(" select  ") +
+		keyStyle.Render("/") + dimStyle.Render(" filter") +
+		sep +
+		keyStyle.Render("ctrl+p") + dimStyle.Render(" commands  ") +
+		toggleHint +
+		sep +
+		keyStyle.Render("?") + dimStyle.Render(" help  ") +
+		keyStyle.Render("q") + dimStyle.Render(" quit")
+	
+	footer := lipgloss.NewStyle().
+		BorderTop(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(overlayColor).
+		Padding(0, 2).
+		Foreground(subTextColor).
+		Render(footerContent)
 
 	sepHeight := m.height - 7
 	if sepHeight < 1 {
 		sepHeight = 1
 	}
-	separator := lipgloss.NewStyle().
-		Foreground(overlayColor).
-		Render(strings.Repeat("│\n", sepHeight))
+	sepColors := []lipgloss.Color{accent, accent2, teal, accent2, accent}
+	sepLines := []string{}
+	for i := 0; i < sepHeight; i++ {
+		colorIdx := i % len(sepColors)
+		sepLines = append(sepLines, lipgloss.NewStyle().Foreground(sepColors[colorIdx]).Render("│"))
+	}
+	separator := strings.Join(sepLines, "\n")
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, separator, right)
 	return lipgloss.JoinVertical(lipgloss.Left,
 		headerBox,
@@ -1372,20 +1394,36 @@ func (m *model) renderCompactTerminal(maxLines int) string {
 		return ""
 	}
 
-	termStyle := lipgloss.NewStyle().Foreground(subTextColor)
-	headerStyle := lipgloss.NewStyle().Foreground(teal).Bold(true)
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(overlayColor).
-		Padding(0, 1)
+	boxWidth := m.preview.Width - 4
+	if boxWidth < 20 {
+		boxWidth = 20
+	}
 
+	trafficLights := lipgloss.NewStyle().Foreground(errorColor).Render("●") + " " +
+		lipgloss.NewStyle().Foreground(warnColor).Render("●") + " " +
+		lipgloss.NewStyle().Foreground(successColor).Render("●")
+	
+	titleText := m.paneSession
+	if len(titleText) > boxWidth-15 {
+		titleText = titleText[:boxWidth-18] + "..."
+	}
+	titleStyle := lipgloss.NewStyle().Foreground(subTextColor)
+	
+	titleBarContent := trafficLights + "  " + titleStyle.Render(titleText)
+	titleBar := lipgloss.NewStyle().
+		Background(surfaceBg).
+		Width(boxWidth).
+		Padding(0, 1).
+		Render(titleBarContent)
+
+	termStyle := lipgloss.NewStyle().Foreground(textColor)
 	lines := strings.Split(m.paneContent, "\n")
 	if len(lines) > maxLines {
 		lines = lines[len(lines)-maxLines:]
 	}
 
 	var termLines []string
-	maxWidth := m.preview.Width - 8
+	maxWidth := boxWidth - 4
 	if maxWidth < 20 {
 		maxWidth = 20
 	}
@@ -1396,12 +1434,13 @@ func (m *model) renderCompactTerminal(maxLines int) string {
 		termLines = append(termLines, termStyle.Render(line))
 	}
 
-	boxWidth := m.preview.Width - 4
-	if boxWidth < 20 {
-		boxWidth = 20
-	}
-	termBox := boxStyle.Width(boxWidth).Render(strings.Join(termLines, "\n"))
-	return headerStyle.Render(iconSession+" Terminal") + "\n" + termBox
+	contentStyle := lipgloss.NewStyle().
+		Background(baseBg).
+		Width(boxWidth).
+		Padding(0, 1)
+	termContent := contentStyle.Render(strings.Join(termLines, "\n"))
+
+	return titleBar + "\n" + termContent
 }
 
 func (m *model) renderPreviewWithTerminal() string {
@@ -1645,14 +1684,23 @@ func (m *model) renderCard(title string, content string) string {
 		cardWidth = 20
 	}
 	
-	headerStyle := lipgloss.NewStyle().Foreground(teal).Bold(true)
-	cardStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(overlayColor).
+	titleBar := lipgloss.NewStyle().
+		Foreground(baseBg).
+		Background(accent).
+		Bold(true).
+		Width(cardWidth).
 		Padding(0, 1).
-		Width(cardWidth)
+		Render(title)
 	
-	return headerStyle.Render(title) + "\n" + cardStyle.Render(content)
+	cardBody := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(accent).
+		BorderTop(false).
+		Padding(0, 1).
+		Width(cardWidth).
+		Render(content)
+	
+	return titleBar + "\n" + cardBody
 }
 
 func renderMenu(title string, m *list.Model) string {
@@ -1688,29 +1736,47 @@ func renderCommandPalette(m *list.Model, width, height int) string {
 
 func renderHelp() string {
 	helpLine := func(key, desc string) string {
-		k := lipgloss.NewStyle().Foreground(teal).Width(10).Render(key)
-		d := dimStyle.Render(desc)
+		k := lipgloss.NewStyle().
+			Foreground(baseBg).
+			Background(teal).
+			Bold(true).
+			Padding(0, 1).
+			Width(10).
+			Render(key)
+		d := lipgloss.NewStyle().Foreground(textColor).Render("  " + desc)
 		return k + d
 	}
+	
+	sectionHeader := func(title string) string {
+		return lipgloss.NewStyle().
+			Foreground(accent).
+			Bold(true).
+			MarginTop(1).
+			Render("━━ " + title + " ━━")
+	}
+
+	t1 := lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c2e7")).Bold(true)
+	t2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#cba6f7")).Bold(true)
+	t3 := lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Bold(true)
+	title := lipgloss.NewStyle().Foreground(successColor).Bold(true).Render("▲ ") +
+		t1.Render("tree") + t2.Render("mu") + t3.Render("x") +
+		dimStyle.Render(" help")
+
 	content := strings.Join([]string{
-		titleStyle.Render("▲ treemux help"),
-		"",
-		sectionTitle("Navigation"),
+		title,
+		sectionHeader("Navigation"),
 		helpLine("j / ↓", "move down"),
 		helpLine("k / ↑", "move up"),
 		helpLine("enter", "jump to worktree / create"),
 		helpLine("/", "filter list"),
-		"",
-		sectionTitle("Actions"),
+		sectionHeader("Actions"),
 		helpLine("tab", "open actions menu"),
 		helpLine("ctrl+p", "command palette"),
 		helpLine("ctrl+d", "delete worktree + session"),
 		helpLine("r", "refresh"),
-		"",
-		sectionTitle("Modes"),
+		sectionHeader("Modes"),
 		helpLine("g", "toggle global mode"),
-		"",
-		sectionTitle("Other"),
+		sectionHeader("Other"),
 		helpLine("?", "toggle this help"),
 		helpLine("esc / q", "quit (back in dialogs)"),
 	}, "\n")
@@ -1798,6 +1864,7 @@ var (
 	accent       = lipgloss.Color("#cba6f7")
 	accent2      = lipgloss.Color("#89b4fa")
 	teal         = lipgloss.Color("#94e2d5")
+	peach        = lipgloss.Color("#fab387")
 	successColor = lipgloss.Color("#a6e3a1")
 	warnColor    = lipgloss.Color("#f9e2af")
 	errorColor   = lipgloss.Color("#f38ba8")
@@ -1851,11 +1918,11 @@ var (
 			Padding(1, 2)
 	previewFrameStyle = lipgloss.NewStyle().
 				Padding(1, 2).
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(overlayColor)
+				Border(lipgloss.ThickBorder()).
+				BorderForeground(accent)
 	modalStyle = lipgloss.NewStyle().
 			Padding(1, 2).
-			Border(lipgloss.RoundedBorder()).
+			Border(lipgloss.DoubleBorder()).
 			BorderForeground(accent)
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -1896,6 +1963,8 @@ var (
 			Foreground(baseBg).
 			Bold(true).
 			Padding(0, 1)
+	selectedRowStyle = lipgloss.NewStyle().
+			Background(surfaceBg)
 )
 
 func sectionTitle(s string) string {
@@ -1923,9 +1992,25 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		width = 20
 	}
 
+	var accentColor lipgloss.Color
+	switch i.kind {
+	case kindCreate:
+		accentColor = teal
+	case kindWorktree:
+		accentColor = accent
+	case kindOrphan:
+		accentColor = peach
+	case kindRecent:
+		accentColor = accent2
+	case kindGlobal:
+		accentColor = teal
+	default:
+		accentColor = dimColor
+	}
+
 	accentBar := dimStyle.Render("  ")
 	if selected {
-		accentBar = accentStyle.Render("▌ ")
+		accentBar = lipgloss.NewStyle().Foreground(accentColor).Bold(true).Render("▌ ")
 	}
 
 	var line1, line2 string
@@ -1933,7 +2018,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	switch i.kind {
 	case kindCreate:
 		if selected {
-			line1 = accentBar + selectedStyle.Render("+ New Worktree")
+			line1 = accentBar + lipgloss.NewStyle().Foreground(accentColor).Bold(true).Render("+ New Worktree")
 			line2 = accentBar + selectedBranchStyle.Render("  Create worktree and session")
 		} else {
 			line1 = accentBar + textStyle.Render("+ New Worktree")
@@ -1993,8 +2078,9 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 			branchDisplay = branchDisplay[:maxBranchWidth-1] + "…"
 		}
 
+		selStyle := lipgloss.NewStyle().Foreground(accentColor).Bold(true)
 		if selected {
-			line1 = accentBar + selectedStyle.Render(indicator+" "+nameDisplay) + "  " + statusBadge
+			line1 = accentBar + selStyle.Render(indicator+" "+nameDisplay) + "  " + statusBadge
 			line2 = accentBar + "    " + selectedBranchStyle.Render(iconBranch+" "+branchDisplay) + sessionInfo
 		} else {
 			line1 = accentBar + textStyle.Render(indicator+" "+nameDisplay) + "  " + statusBadge
@@ -2028,21 +2114,23 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 
 	case kindOrphan:
 		name := i.title
+		orphanStyle := lipgloss.NewStyle().Foreground(peach).Bold(true)
 		if selected {
-			line1 = accentBar + warnStyle.Render(iconSession+" "+name)
-			line2 = accentBar + "    " + selectedBranchStyle.Render("orphaned session")
+			line1 = accentBar + orphanStyle.Render(iconSession+" "+name)
+			line2 = accentBar + "    " + lipgloss.NewStyle().Foreground(peach).Render("orphaned session")
 		} else {
-			line1 = accentBar + warnStyle.Render(iconSession+" "+name)
+			line1 = accentBar + lipgloss.NewStyle().Foreground(peach).Render(iconSession+" "+name)
 			line2 = accentBar + "    " + dimStyle.Render("orphaned session")
 		}
 
 	case kindRecent:
 		name := i.title
+		recentStyle := lipgloss.NewStyle().Foreground(accent2).Bold(true)
 		if selected {
-			line1 = accentBar + selectedStyle.Render(iconJump+" "+name)
-			line2 = accentBar + "    " + selectedBranchStyle.Render("recent project")
+			line1 = accentBar + recentStyle.Render(iconJump+" "+name)
+			line2 = accentBar + "    " + lipgloss.NewStyle().Foreground(accent2).Render("recent project")
 		} else {
-			line1 = accentBar + sectionStyle.Render(iconJump+" "+name)
+			line1 = accentBar + lipgloss.NewStyle().Foreground(accent2).Render(iconJump+" "+name)
 			line2 = accentBar + "    " + dimStyle.Render("recent project")
 		}
 
@@ -2082,19 +2170,29 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 			branchDisplay = branchDisplay[:maxBranchWidth-1] + "…"
 		}
 
+		globalStyle := lipgloss.NewStyle().Foreground(teal).Bold(true)
 		if selected {
-			line1 = accentBar + selectedStyle.Render(iconWorktree+" "+nameDisplay)
-			line2 = accentBar + "    " + selectedBranchStyle.Render(iconBranch+" "+branchDisplay)
+			line1 = accentBar + globalStyle.Render(iconWorktree+" "+nameDisplay)
+			line2 = accentBar + "    " + lipgloss.NewStyle().Foreground(teal).Render(iconBranch+" "+branchDisplay)
 		} else {
 			line1 = accentBar + textStyle.Render(iconWorktree+" "+nameDisplay)
 			line2 = accentBar + "    " + branchStyle.Render(iconBranch+" "+branchDisplay)
 		}
 	}
 
-	if line2 != "" {
-		fmt.Fprint(w, line1+"\n"+line2)
+	if selected && i.kind != kindSeparator && i.kind != kindHeader && i.kind != kindRepoHeader {
+		rowStyle := lipgloss.NewStyle().Background(surfaceBg).Width(width)
+		if line2 != "" {
+			fmt.Fprint(w, rowStyle.Render(line1)+"\n"+rowStyle.Render(line2))
+		} else {
+			fmt.Fprint(w, rowStyle.Render(line1)+"\n")
+		}
 	} else {
-		fmt.Fprint(w, line1+"\n")
+		if line2 != "" {
+			fmt.Fprint(w, line1+"\n"+line2)
+		} else {
+			fmt.Fprint(w, line1+"\n")
+		}
 	}
 }
 
