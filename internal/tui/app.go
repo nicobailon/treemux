@@ -1182,8 +1182,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else if len(m.gridAvailable) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
-					} else {
-						m.gridIndex = -1
 					}
 					return m, nil
 				}
@@ -1222,6 +1220,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridAvailIdx = len(m.gridAvailable) - 1
 					} else if filteredLen > 0 {
 						m.gridIndex = filteredLen - 1
+					} else {
+						m.gridIndex = -2
 					}
 					return m, nil
 				}
