@@ -1229,10 +1229,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.gridIndex = -1
 					return m, nil
 				}
-				if m.gridIndex == 0 {
-					m.gridIndex = -2
-					return m, nil
-				}
 				if m.gridInAvailable {
 					if m.gridAvailIdx > 0 {
 						m.gridAvailIdx--
@@ -1243,12 +1239,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridInAvailable = false
 						m.gridIndex = -2
 					}
-				} else {
-					if m.gridIndex > 0 {
-						m.gridIndex--
-					} else {
-						m.gridIndex = -2
-					}
+					return m, nil
+				}
+				if m.gridIndex == 0 {
+					m.gridIndex = -2
+					return m, nil
+				}
+				if m.gridIndex > 0 {
+					m.gridIndex--
 				}
 				return m, nil
 			}
@@ -1304,10 +1302,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.gridIndex = -1
 					return m, nil
 				}
-				if m.gridIndex == 0 {
-					m.gridIndex = -2
-					return m, nil
-				}
 				if m.gridInAvailable {
 					if m.gridAvailIdx > 0 {
 						m.gridAvailIdx--
@@ -1321,7 +1315,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.gridIndex = -2
 						}
 					}
-				} else if m.gridIndex > 0 {
+					return m, nil
+				}
+				if m.gridIndex == 0 {
+					m.gridIndex = -2
+					return m, nil
+				}
+				if m.gridIndex > 0 {
 					m.gridIndex--
 				}
 				return m, nil
