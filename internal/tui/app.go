@@ -485,13 +485,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		
 		if m.state == stateGridView {
+			wasInAvailable := m.gridInAvailable
+			prevAvailIdx := m.gridAvailIdx
+			prevGridIdx := m.gridIndex
 			m.buildGridPanels()
-			m.gridScrollOffset = 0
-			m.gridIndex = 0
-			m.gridInAvailable = false
-			if len(m.gridPanels) == 0 && len(m.gridAvailable) > 0 {
+			if wasInAvailable && len(m.gridAvailable) > 0 {
 				m.gridInAvailable = true
-				m.gridAvailIdx = 0
+				if prevAvailIdx < len(m.gridAvailable) {
+					m.gridAvailIdx = prevAvailIdx
+				} else {
+					m.gridAvailIdx = len(m.gridAvailable) - 1
+				}
+			} else if !wasInAvailable && prevGridIdx >= 0 {
+				filteredPanels := m.getFilteredGridPanels()
+				if prevGridIdx < len(filteredPanels) {
+					m.gridIndex = prevGridIdx
+				} else if len(filteredPanels) > 0 {
+					m.gridIndex = len(filteredPanels) - 1
+				} else if len(m.gridAvailable) > 0 {
+					m.gridInAvailable = true
+					m.gridAvailIdx = 0
+				}
 			}
 			return m, m.loadGridContentCmd()
 		}
@@ -517,13 +531,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		
 		if m.state == stateGridView {
+			wasInAvailable := m.gridInAvailable
+			prevAvailIdx := m.gridAvailIdx
+			prevGridIdx := m.gridIndex
 			m.buildGridPanels()
-			m.gridScrollOffset = 0
-			m.gridIndex = 0
-			m.gridInAvailable = false
-			if len(m.gridPanels) == 0 && len(m.gridAvailable) > 0 {
+			if wasInAvailable && len(m.gridAvailable) > 0 {
 				m.gridInAvailable = true
-				m.gridAvailIdx = 0
+				if prevAvailIdx < len(m.gridAvailable) {
+					m.gridAvailIdx = prevAvailIdx
+				} else {
+					m.gridAvailIdx = len(m.gridAvailable) - 1
+				}
+			} else if !wasInAvailable && prevGridIdx >= 0 {
+				filteredPanels := m.getFilteredGridPanels()
+				if prevGridIdx < len(filteredPanels) {
+					m.gridIndex = prevGridIdx
+				} else if len(filteredPanels) > 0 {
+					m.gridIndex = len(filteredPanels) - 1
+				} else if len(m.gridAvailable) > 0 {
+					m.gridInAvailable = true
+					m.gridAvailIdx = 0
+				}
 			}
 			return m, m.loadGridContentCmd()
 		}
