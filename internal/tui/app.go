@@ -1554,7 +1554,10 @@ func (m *model) buildGridPanels() {
 		}
 	}
 	
-	for _, o := range m.orphans {
+	sortedOrphans := make([]string, len(m.orphans))
+	copy(sortedOrphans, m.orphans)
+	sort.Strings(sortedOrphans)
+	for _, o := range sortedOrphans {
 		panel := gridPanel{
 			name:        o,
 			sessionName: o,
@@ -2115,36 +2118,37 @@ func (m *model) renderGridView() string {
 			Padding(0, 1).
 			Render(titleContent)
 
-		var lines []string
-
+		line1 := ""
 		if panel.branch != "" {
 			branchDisplay := panel.branch
 			maxBranchLen := innerWidth - 4
 			if len(branchDisplay) > maxBranchLen {
 				branchDisplay = branchDisplay[:maxBranchLen-1] + "…"
 			}
-			branchLine := lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Render("⎇ " + branchDisplay)
-			lines = append(lines, branchLine)
+			line1 = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Render("⎇ " + branchDisplay)
 		}
 
+		line2 := ""
 		if isActive {
 			statusText := "● active"
 			if panel.windows > 0 {
 				statusText += fmt.Sprintf(" %dw %dp", panel.windows, panel.panes)
 			}
-			lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")).Render(statusText))
+			line2 = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")).Render(statusText)
 		} else {
-			lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#45475a")).Render("○ inactive"))
+			line2 = lipgloss.NewStyle().Foreground(lipgloss.Color("#45475a")).Render("○ inactive")
 		}
 
+		line3 := ""
 		if globalIdx < 9 {
-			lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#45475a")).Render(fmt.Sprintf("[%d]", globalIdx+1)))
+			line3 = lipgloss.NewStyle().Foreground(lipgloss.Color("#45475a")).Render(fmt.Sprintf("[%d]", globalIdx+1))
 		}
 
 		content := lipgloss.NewStyle().
 			Width(innerWidth).
+			Height(3).
 			Padding(0, 1).
-			Render(strings.Join(lines, "\n"))
+			Render(line1 + "\n" + line2 + "\n" + line3)
 
 		panelContent := titleBar + "\n" + content
 
@@ -2213,7 +2217,7 @@ func (m *model) renderGridView() string {
 		availableHeight = 1
 	}
 
-	panelLines := 7
+	panelLines := 6
 	var selectedLine int
 	sessionsLines := 0
 	if len(worktreePanels) > 0 {
