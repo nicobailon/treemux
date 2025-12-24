@@ -35,6 +35,7 @@ const (
 	stateHelp
 	stateCommandPalette
 	stateGridView
+	stateGridDetail
 )
 
 const defaultRefreshInterval = 3 * time.Second
@@ -148,6 +149,10 @@ type model struct {
 	gridFiltering    bool
 	gridInAvailable  bool
 	gridAvailIdx     int
+	gridViewport     viewport.Model
+	gridScrollOffset int
+	gridDetailPanel  *gridPanel
+	gridDetailIdx    int
 }
 
 type gridPanel struct {
@@ -158,6 +163,7 @@ type gridPanel struct {
 	content     string
 	hasSession  bool
 	isOrphan    bool
+	isRecent    bool
 	modified    int
 	staged      int
 	windows     int
@@ -264,7 +270,7 @@ func initialModel(svc *workspace.Service, cfg *config.Config, t *tmux.Tmux, inGi
 		cfg:             cfg,
 		tmux:            t,
 		recentStore:     recentStore,
-		state:           stateMain,
+		state:           stateGridView,
 		nextBranchState: stateCreateBranch,
 		list:            l,
 		preview:         vp,
@@ -478,6 +484,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectAfterLoad = ""
 		}
 		
+		if m.state == stateGridView {
+			m.buildGridPanels()
+			m.gridScrollOffset = 0
+			m.gridIndex = 0
+			m.gridInAvailable = false
+			if len(m.gridPanels) == 0 && len(m.gridAvailable) > 0 {
+				m.gridInAvailable = true
+				m.gridAvailIdx = 0
+			}
+			return m, m.loadGridContentCmd()
+		}
 		return m, nil
 
 	case globalDataLoadedMsg:
@@ -499,6 +516,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectAfterLoad = ""
 		}
 		
+		if m.state == stateGridView {
+			m.buildGridPanels()
+			m.gridScrollOffset = 0
+			m.gridIndex = 0
+			m.gridInAvailable = false
+			if len(m.gridPanels) == 0 && len(m.gridAvailable) > 0 {
+				m.gridInAvailable = true
+				m.gridAvailIdx = 0
+			}
+			return m, m.loadGridContentCmd()
+		}
 		return m, nil
 
 	case branchesMsg:
@@ -882,7 +910,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	// Handle navigation to skip non-selectable items
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.state != stateGridView {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.state != stateGridView && m.state != stateGridDetail {
 		switch keyMsg.String() {
 		case "j", "down":
 			m.list, cmd = m.list.Update(msg)
@@ -903,7 +931,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.state != stateGridView {
+	if m.state != stateGridView && m.state != stateGridDetail {
 		m.list, cmd = m.list.Update(msg)
 		cmds = append(cmds, cmd)
 	}
@@ -924,11 +952,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == stateMain {
 				return m, tea.Quit
 			}
+			if m.state == stateGridDetail {
+				m.state = stateGridView
+				m.gridDetailPanel = nil
+				return m, nil
+			}
 			if m.state == stateGridView {
 				if m.gridFiltering {
 					m.gridFilter = ""
 					m.gridFiltering = false
 					m.gridIndex = 0
+					m.gridScrollOffset = 0
 					return m, nil
 				}
 				m.state = stateMain
@@ -960,30 +994,87 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.state == stateGridView {
-				if m.gridInAvailable && m.gridAvailIdx < len(m.gridAvailable) {
-					panel := m.gridAvailable[m.gridAvailIdx]
-					sessionName := filepath.Base(panel.name)
-					m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: panel.path, Create: true}
-					return m, tea.Quit
+				if m.gridIndex == -1 {
+					if m.globalMode {
+						repos := extractUniqueRepos(m.globalWorktrees)
+						if len(repos) == 0 {
+							m.toast = &toast{message: "No repositories found", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
+							return m, toastExpireCmd()
+						}
+						m.availableRepos = repos
+						items := make([]list.Item, len(repos))
+						for i, r := range repos {
+							items[i] = listItem{title: r.name, desc: r.root, kind: kindHeader}
+						}
+						m.menu.SetItems(items)
+						m.menu.Select(0)
+						m.state = stateSelectRepo
+						return m, nil
+					}
+					m.state = stateCreateName
+					m.input.SetValue("")
+					return m, m.input.Focus()
 				}
-				filteredPanels := m.getFilteredGridPanels()
-				if m.gridIndex < len(filteredPanels) {
-					panel := filteredPanels[m.gridIndex]
+				if m.gridIndex == -2 {
+					m.state = stateMain
+					return m, nil
+				}
+				var panel *gridPanel
+				if m.gridInAvailable && m.gridAvailIdx < len(m.gridAvailable) {
+					p := m.gridAvailable[m.gridAvailIdx]
+					panel = &p
+				} else {
+					filteredPanels := m.getFilteredGridPanels()
+					if m.gridIndex >= 0 && m.gridIndex < len(filteredPanels) {
+						p := filteredPanels[m.gridIndex]
+						panel = &p
+					}
+				}
+				if panel != nil {
+					m.gridDetailPanel = panel
+					m.gridDetailIdx = 0
+					m.state = stateGridDetail
+				}
+				return m, nil
+			}
+			if m.state == stateGridDetail && m.gridDetailPanel != nil {
+				panel := m.gridDetailPanel
+				backIdx := 1
+				if panel.hasSession {
+					backIdx = 2
+				}
+				if panel.isOrphan {
+					backIdx = 3
+				}
+				if m.gridDetailIdx == backIdx {
+					m.state = stateGridView
+					m.gridDetailPanel = nil
+					return m, nil
+				}
+				switch m.gridDetailIdx {
+				case 0:
+					if panel.hasSession {
+						m.jumpTarget = &JumpTarget{SessionName: panel.sessionName, Path: panel.path}
+					} else {
+						sessionName := panel.sessionName
+						if sessionName == "" {
+							sessionName = filepath.Base(panel.name)
+						}
+						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: panel.path, Create: true}
+					}
+					return m, tea.Quit
+				case 1:
 					if panel.isOrphan {
 						m.pending = panel.sessionName
 						m.prevState = stateGridView
-						if m.globalMode {
-							m.menu.SetItems(globalOrphanMenuItems())
-						} else {
-							m.menu.SetItems(orphanMenuItems())
-						}
-						m.menu.Select(0)
-						m.state = stateOrphanMenu
-						return m, nil
+						m.nextBranchState = stateOrphanBranch
+						return m, branchesCmd(m.svc)
+					} else if panel.hasSession {
+						return m, killSessionCmd(m.svc, panel.sessionName)
 					}
-					if panel.hasSession {
-						m.jumpTarget = &JumpTarget{SessionName: panel.sessionName, Path: panel.path}
-						return m, tea.Quit
+				case 2:
+					if panel.isOrphan {
+						return m, killSessionDirectCmd(m.tmux, panel.sessionName)
 					}
 				}
 				return m, nil
@@ -1020,6 +1111,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.gridIndex = 0
 					m.gridFilter = ""
 					m.gridFiltering = false
+					m.gridScrollOffset = 0
 					if len(m.gridPanels) == 0 && len(m.gridAvailable) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
@@ -1064,28 +1156,50 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "tab":
+			if m.state == stateGridDetail && m.gridDetailPanel != nil {
+				maxIdx := 1
+				if m.gridDetailPanel.hasSession {
+					maxIdx = 2
+				}
+				if m.gridDetailPanel.isOrphan {
+					maxIdx = 3
+				}
+				m.gridDetailIdx++
+				if m.gridDetailIdx > maxIdx {
+					m.gridDetailIdx = 0
+				}
+				return m, nil
+			}
 			if m.state == stateGridView {
 				filteredLen := len(m.getFilteredGridPanels())
-				totalItems := filteredLen + len(m.gridAvailable)
-				if totalItems > 0 {
-					if m.gridInAvailable {
-						if m.gridAvailIdx < len(m.gridAvailable)-1 {
-							m.gridAvailIdx++
-						} else if filteredLen > 0 {
-							m.gridInAvailable = false
-							m.gridIndex = 0
-						} else {
-							m.gridAvailIdx = 0
-						}
+				if m.gridIndex == -1 {
+					m.gridIndex = -2
+					return m, nil
+				}
+				if m.gridIndex == -2 {
+					if filteredLen > 0 {
+						m.gridIndex = 0
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
+					}
+					return m, nil
+				}
+				if m.gridInAvailable {
+					if m.gridAvailIdx < len(m.gridAvailable)-1 {
+						m.gridAvailIdx++
 					} else {
-						if m.gridIndex < filteredLen-1 {
-							m.gridIndex++
-						} else if len(m.gridAvailable) > 0 {
-							m.gridInAvailable = true
-							m.gridAvailIdx = 0
-						} else if filteredLen > 0 {
-							m.gridIndex = 0
-						}
+						m.gridInAvailable = false
+						m.gridIndex = -1
+					}
+				} else {
+					if m.gridIndex < filteredLen-1 {
+						m.gridIndex++
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
+					} else {
+						m.gridIndex = -1
 					}
 				}
 				return m, nil
@@ -1100,24 +1214,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab":
 			if m.state == stateGridView {
 				filteredLen := len(m.getFilteredGridPanels())
+				if m.gridIndex == -1 {
+					if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = len(m.gridAvailable) - 1
+					} else if filteredLen > 0 {
+						m.gridIndex = filteredLen - 1
+					} else {
+						m.gridIndex = -2
+					}
+					return m, nil
+				}
+				if m.gridIndex == -2 {
+					m.gridIndex = -1
+					return m, nil
+				}
 				if m.gridInAvailable {
 					if m.gridAvailIdx > 0 {
 						m.gridAvailIdx--
 					} else if filteredLen > 0 {
 						m.gridInAvailable = false
 						m.gridIndex = filteredLen - 1
-					} else if len(m.gridAvailable) > 0 {
-						m.gridAvailIdx = len(m.gridAvailable) - 1
+					} else {
+						m.gridInAvailable = false
+						m.gridIndex = -2
 					}
-				} else {
-					if m.gridIndex > 0 {
-						m.gridIndex--
-					} else if len(m.gridAvailable) > 0 {
-						m.gridInAvailable = true
-						m.gridAvailIdx = len(m.gridAvailable) - 1
-					} else if filteredLen > 0 {
-						m.gridIndex = filteredLen - 1
-					}
+					return m, nil
+				}
+				if m.gridIndex == 0 {
+					m.gridIndex = -2
+					return m, nil
+				}
+				if m.gridIndex > 0 {
+					m.gridIndex--
 				}
 				return m, nil
 			}
@@ -1154,25 +1283,65 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.gridIndex = 0
 				m.gridFilter = ""
 				m.gridFiltering = false
+				m.gridScrollOffset = 0
 				if len(m.gridPanels) == 0 && len(m.gridAvailable) > 0 {
 					m.gridInAvailable = true
 					m.gridAvailIdx = 0
 				}
 				return m, m.loadGridContentCmd()
+			} else if m.state == stateGridView {
+				m.state = stateMain
+				return m, nil
 			}
 		case "left", "h":
 			if m.state == stateGridView {
+				if m.gridIndex == -1 {
+					return m, nil
+				}
+				if m.gridIndex == -2 {
+					m.gridIndex = -1
+					return m, nil
+				}
 				if m.gridInAvailable {
 					if m.gridAvailIdx > 0 {
 						m.gridAvailIdx--
+					} else {
+						filteredLen := len(m.getFilteredGridPanels())
+						if filteredLen > 0 {
+							m.gridInAvailable = false
+							m.gridIndex = filteredLen - 1
+						} else {
+							m.gridInAvailable = false
+							m.gridIndex = -2
+						}
 					}
-				} else if m.gridIndex > 0 {
+					return m, nil
+				}
+				if m.gridIndex == 0 {
+					m.gridIndex = -2
+					return m, nil
+				}
+				if m.gridIndex > 0 {
 					m.gridIndex--
 				}
 				return m, nil
 			}
 		case "right", "l":
 			if m.state == stateGridView {
+				if m.gridIndex == -1 {
+					m.gridIndex = -2
+					return m, nil
+				}
+				if m.gridIndex == -2 {
+					filteredLen := len(m.getFilteredGridPanels())
+					if filteredLen > 0 {
+						m.gridIndex = 0
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
+					}
+					return m, nil
+				}
 				if m.gridInAvailable {
 					if m.gridAvailIdx < len(m.gridAvailable)-1 {
 						m.gridAvailIdx++
@@ -1181,41 +1350,168 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					filteredLen := len(m.getFilteredGridPanels())
 					if m.gridIndex < filteredLen-1 {
 						m.gridIndex++
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
 					}
 				}
 				return m, nil
 			}
 		case "up", "k":
+			if m.state == stateGridDetail {
+				if m.gridDetailIdx > 0 {
+					m.gridDetailIdx--
+				}
+				return m, nil
+			}
 			if m.state == stateGridView {
 				if m.gridInAvailable {
-					filteredLen := len(m.getFilteredGridPanels())
-					if filteredLen > 0 {
-						m.gridInAvailable = false
-						m.gridIndex = filteredLen - 1
+					if m.gridAvailIdx >= m.gridCols {
+						m.gridAvailIdx -= m.gridCols
+					} else {
+						filteredPanels := m.getFilteredGridPanels()
+						if len(filteredPanels) > 0 {
+							m.gridInAvailable = false
+							m.gridIndex = len(filteredPanels) - 1
+						} else {
+							m.gridInAvailable = false
+							m.gridIndex = -2
+						}
 					}
-				} else if m.gridIndex >= m.gridCols {
-					m.gridIndex -= m.gridCols
-				} else if m.gridIndex > 0 {
-					m.gridIndex--
+				} else if m.gridIndex == -1 {
+					return m, nil
+				} else if m.gridIndex == -2 {
+					m.gridIndex = -1
+				} else {
+					filteredPanels := m.getFilteredGridPanels()
+					if m.gridIndex >= len(filteredPanels) || len(filteredPanels) == 0 {
+						m.gridIndex = -2
+						return m, nil
+					}
+					var sessionCount, recentCount int
+					for _, p := range filteredPanels {
+						if !p.isOrphan && !p.isRecent {
+							sessionCount++
+						} else if p.isRecent {
+							recentCount++
+						}
+					}
+					currentPanel := filteredPanels[m.gridIndex]
+					if currentPanel.isOrphan {
+						firstOrphanIdx := sessionCount + recentCount
+						localIdx := m.gridIndex - firstOrphanIdx
+						if localIdx >= m.gridCols {
+							m.gridIndex -= m.gridCols
+						} else if firstOrphanIdx > 0 {
+							m.gridIndex = firstOrphanIdx - 1
+						} else {
+							m.gridIndex = -2
+						}
+					} else if currentPanel.isRecent {
+						localIdx := m.gridIndex - sessionCount
+						if localIdx >= m.gridCols {
+							m.gridIndex -= m.gridCols
+						} else if sessionCount > 0 {
+							m.gridIndex = sessionCount - 1
+						} else {
+							m.gridIndex = -2
+						}
+					} else {
+						if m.gridIndex >= m.gridCols {
+							m.gridIndex -= m.gridCols
+						} else {
+							m.gridIndex = -2
+						}
+					}
 				}
 				return m, nil
 			}
 		case "down", "j":
+			if m.state == stateGridDetail && m.gridDetailPanel != nil {
+				maxIdx := 1
+				if m.gridDetailPanel.hasSession {
+					maxIdx = 2
+				}
+				if m.gridDetailPanel.isOrphan {
+					maxIdx = 3
+				}
+				if m.gridDetailIdx < maxIdx {
+					m.gridDetailIdx++
+				}
+				return m, nil
+			}
 			if m.state == stateGridView {
 				if m.gridInAvailable {
-					if m.gridAvailIdx < len(m.gridAvailable)-1 {
-						m.gridAvailIdx++
+					if m.gridAvailIdx+m.gridCols < len(m.gridAvailable) {
+						m.gridAvailIdx += m.gridCols
+					} else {
+						nextRowStart := ((m.gridAvailIdx / m.gridCols) + 1) * m.gridCols
+						if nextRowStart < len(m.gridAvailable) {
+							m.gridAvailIdx = nextRowStart
+						}
 					}
 					return m, nil
 				}
-				filteredLen := len(m.getFilteredGridPanels())
-				if m.gridIndex+m.gridCols < filteredLen {
-					m.gridIndex += m.gridCols
-				} else if m.gridIndex < filteredLen-1 {
-					m.gridIndex++
-				} else if len(m.gridAvailable) > 0 {
-					m.gridInAvailable = true
-					m.gridAvailIdx = 0
+				if m.gridIndex == -1 {
+					m.gridIndex = -2
+					return m, nil
+				}
+				if m.gridIndex == -2 {
+					filteredPanels := m.getFilteredGridPanels()
+					if len(filteredPanels) > 0 {
+						m.gridIndex = 0
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
+					}
+					return m, nil
+				}
+				filteredPanels := m.getFilteredGridPanels()
+				if m.gridIndex >= len(filteredPanels) || len(filteredPanels) == 0 {
+					return m, nil
+				}
+				var sessionCount, recentCount, orphanCount int
+				for _, p := range filteredPanels {
+					if !p.isOrphan && !p.isRecent {
+						sessionCount++
+					} else if p.isRecent {
+						recentCount++
+					} else {
+						orphanCount++
+					}
+				}
+				currentPanel := filteredPanels[m.gridIndex]
+				if !currentPanel.isOrphan && !currentPanel.isRecent {
+					localIdx := m.gridIndex
+					if localIdx+m.gridCols < sessionCount {
+						m.gridIndex += m.gridCols
+					} else if recentCount > 0 {
+						m.gridIndex = sessionCount
+					} else if orphanCount > 0 {
+						m.gridIndex = sessionCount + recentCount
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
+					}
+				} else if currentPanel.isRecent {
+					localIdx := m.gridIndex - sessionCount
+					if localIdx+m.gridCols < recentCount {
+						m.gridIndex += m.gridCols
+					} else if orphanCount > 0 {
+						m.gridIndex = sessionCount + recentCount
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
+					}
+				} else {
+					firstOrphanIdx := sessionCount + recentCount
+					localIdx := m.gridIndex - firstOrphanIdx
+					if localIdx+m.gridCols < orphanCount {
+						m.gridIndex += m.gridCols
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
+					}
 				}
 				return m, nil
 			}
@@ -1399,8 +1695,34 @@ func (m *model) buildGridPanels() {
 			}
 		}
 	}
-	
-	for _, o := range m.orphans {
+
+	if !m.globalMode {
+		for _, r := range m.recentEntries {
+			sessionName := r.SessionName
+			if sessionName == "" {
+				sessionName = r.Worktree
+			}
+			panel := gridPanel{
+				name:        r.RepoName + "/" + r.Worktree,
+				sessionName: sessionName,
+				path:        r.Path,
+				hasSession:  m.tmux.HasSession(sessionName),
+				isRecent:    true,
+			}
+			if panel.hasSession {
+				if info, err := m.tmux.SessionInfo(sessionName); err == nil && info != nil {
+					panel.windows = info.Windows
+					panel.panes = info.Panes
+				}
+			}
+			m.gridPanels = append(m.gridPanels, panel)
+		}
+	}
+
+	sortedOrphans := make([]string, len(m.orphans))
+	copy(sortedOrphans, m.orphans)
+	sort.Strings(sortedOrphans)
+	for _, o := range sortedOrphans {
 		panel := gridPanel{
 			name:        o,
 			sessionName: o,
@@ -1414,8 +1736,12 @@ func (m *model) buildGridPanels() {
 		m.gridPanels = append(m.gridPanels, panel)
 	}
 	
-	panelWidth := 40
-	m.gridCols = m.width / panelWidth
+	gridWidth := m.width - 4
+	if gridWidth < 32 {
+		gridWidth = 32
+	}
+	minPanelWidth := 32
+	m.gridCols = gridWidth / minPanelWidth
 	if m.gridCols < 1 {
 		m.gridCols = 1
 	}
@@ -1616,6 +1942,8 @@ func (m model) View() string {
 		return renderCommandPalette(&m.commandPalette, m.width, m.height)
 	case stateGridView:
 		return m.renderGridView()
+	case stateGridDetail:
+		return m.renderGridDetail()
 	}
 
 	left := listFrameStyle.Render(m.list.View())
@@ -1693,7 +2021,7 @@ func (m model) View() string {
 	footerContent := keyStyle.Render("enter") + dimStyle.Render(" select  ") +
 		keyStyle.Render("/") + dimStyle.Render(" filter") +
 		sep +
-		keyStyle.Render("ctrl+g") + dimStyle.Render(" grid  ") +
+		keyStyle.Render("ctrl+g") + dimStyle.Render(" grid view  ") +
 		keyStyle.Render("ctrl+p") + dimStyle.Render(" cmd  ") +
 		toggleHint +
 		sep +
@@ -1844,13 +2172,15 @@ func reorderCurrentFirst(states []workspace.WorktreeState, currentPath string) [
 }
 
 func (m *model) renderGridView() string {
-	if len(m.gridPanels) == 0 {
+	if len(m.gridPanels) == 0 && len(m.gridAvailable) == 0 {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
-			dimStyle.Render("No active sessions"))
+			dimStyle.Render("No sessions or worktrees"))
 	}
 
-	sidebarWidth := 30
-	gridWidth := m.width - sidebarWidth - 3
+	gridWidth := m.width - 4
+	if gridWidth < 32 {
+		gridWidth = 32
+	}
 
 	minPanelWidth := 32
 	m.gridCols = gridWidth / minPanelWidth
@@ -1861,15 +2191,14 @@ func (m *model) renderGridView() string {
 		m.gridCols = 4
 	}
 	panelWidth := gridWidth / m.gridCols
-	panelHeight := 10
+	innerWidth := panelWidth - 4
 
 	t1 := lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c2e7")).Bold(true)
 	t2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#cba6f7")).Bold(true)
 	t3 := lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Bold(true)
 	title := lipgloss.NewStyle().Foreground(successColor).Bold(true).Render("▲ ") +
-		t1.Render("tree") + t2.Render("mu") + t3.Render("x") +
-		dimStyle.Render(" grid view")
-	
+		t1.Render("tree") + t2.Render("mu") + t3.Render("x")
+
 	if m.gridFiltering {
 		filterStyle := lipgloss.NewStyle().
 			Foreground(baseBg).
@@ -1878,10 +2207,11 @@ func (m *model) renderGridView() string {
 			Padding(0, 1)
 		title += "  " + filterStyle.Render("/"+m.gridFilter+"_")
 	}
-	
+
 	hint := dimStyle.Render("/") + " " + subTextStyle.Render("filter") + "  " +
 		dimStyle.Render("1-9") + " " + subTextStyle.Render("quick jump") + "  " +
-		dimStyle.Render("enter") + " " + subTextStyle.Render("jump") + "  " +
+		dimStyle.Render("enter") + " " + subTextStyle.Render("open") + "  " +
+		dimStyle.Render("ctrl+g") + " " + subTextStyle.Render("list view") + "  " +
 		dimStyle.Render("esc") + " " + subTextStyle.Render("back")
 
 	header := lipgloss.NewStyle().Padding(1, 2).Render(title)
@@ -1893,31 +2223,112 @@ func (m *model) renderGridView() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, "\n"+noResults)
 	}
 
-	var worktreePanels, orphanPanels []gridPanel
-	worktreeIndices := make(map[int]int)
+	var sessionPanels, recentPanels, orphanPanels []gridPanel
+	sessionIndices := make(map[int]int)
+	recentIndices := make(map[int]int)
 	orphanIndices := make(map[int]int)
 	for i, p := range filteredPanels {
 		if p.isOrphan {
 			orphanIndices[len(orphanPanels)] = i
 			orphanPanels = append(orphanPanels, p)
+		} else if p.isRecent {
+			recentIndices[len(recentPanels)] = i
+			recentPanels = append(recentPanels, p)
 		} else {
-			worktreeIndices[len(worktreePanels)] = i
-			worktreePanels = append(worktreePanels, p)
+			sessionIndices[len(sessionPanels)] = i
+			sessionPanels = append(sessionPanels, p)
 		}
 	}
 
 	renderSectionHeader := func(text string) string {
-		textWidth := len(text) + 2
-		sideWidth := (gridWidth - textWidth) / 2
-		if sideWidth < 2 {
-			sideWidth = 2
-		}
-		leftDash := strings.Repeat("─", sideWidth)
-		rightDash := strings.Repeat("─", sideWidth)
-		return lipgloss.NewStyle().Foreground(dimColor).Render(leftDash+" "+text+" "+rightDash)
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#6c7086")).
+			MarginTop(1).
+			MarginBottom(1).
+			Render("── " + text + " " + strings.Repeat("─", gridWidth-len(text)-5))
 	}
 
-	renderPanelGrid := func(panels []gridPanel, indices map[int]int) string {
+	renderPanel := func(panel gridPanel, globalIdx int, isSelected bool, isActive bool) string {
+		borderColor := lipgloss.Color("#313244")
+		titleBg := lipgloss.Color("#1e1e2e")
+		if isSelected {
+			borderColor = successColor
+			titleBg = lipgloss.Color("#313244")
+		}
+
+		trafficStyle := lipgloss.NewStyle()
+		if isActive {
+			trafficStyle = trafficStyle.Foreground(lipgloss.Color("#a6e3a1"))
+		} else {
+			trafficStyle = trafficStyle.Foreground(lipgloss.Color("#45475a"))
+		}
+		traffic := trafficStyle.Render("●●●")
+
+		displayName := panel.name
+		maxNameLen := innerWidth - 8
+		if maxNameLen < 5 {
+			maxNameLen = 5
+		}
+		if len(displayName) > maxNameLen {
+			displayName = displayName[:maxNameLen-1] + "…"
+		}
+
+		nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4"))
+		if isSelected {
+			nameStyle = nameStyle.Foreground(successColor).Bold(true)
+		} else if !isActive {
+			nameStyle = nameStyle.Foreground(lipgloss.Color("#6c7086"))
+		}
+
+		titleContent := traffic + " " + nameStyle.Render(displayName)
+		titleBar := lipgloss.NewStyle().
+			Width(innerWidth).
+			Background(titleBg).
+			Padding(0, 1).
+			Render(titleContent)
+
+		line1 := ""
+		if panel.branch != "" {
+			branchDisplay := panel.branch
+			maxBranchLen := innerWidth - 4
+			if len(branchDisplay) > maxBranchLen {
+				branchDisplay = branchDisplay[:maxBranchLen-1] + "…"
+			}
+			line1 = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Render("⎇ " + branchDisplay)
+		}
+
+		line2 := ""
+		if isActive {
+			statusText := "● active"
+			if panel.windows > 0 {
+				statusText += fmt.Sprintf(" %dw %dp", panel.windows, panel.panes)
+			}
+			line2 = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")).Render(statusText)
+		} else {
+			line2 = lipgloss.NewStyle().Foreground(lipgloss.Color("#45475a")).Render("○ inactive")
+		}
+
+		line3 := ""
+		if globalIdx < 9 {
+			line3 = lipgloss.NewStyle().Foreground(lipgloss.Color("#45475a")).Render(fmt.Sprintf("[%d]", globalIdx+1))
+		}
+
+		content := lipgloss.NewStyle().
+			Width(innerWidth).
+			Height(3).
+			Padding(0, 1).
+			Render(line1 + "\n" + line2 + "\n" + line3)
+
+		panelContent := titleBar + "\n" + content
+
+		return lipgloss.NewStyle().
+			Width(panelWidth - 2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(borderColor).
+			Render(panelContent)
+	}
+
+	renderPanelGrid := func(panels []gridPanel, indices map[int]int, active bool) string {
 		if len(panels) == 0 {
 			return ""
 		}
@@ -1926,167 +2337,159 @@ func (m *model) renderGridView() string {
 		for localIdx, panel := range panels {
 			globalIdx := indices[localIdx]
 			isSelected := globalIdx == m.gridIndex && !m.gridInAvailable
+			renderedPanel := renderPanel(panel, globalIdx, isSelected, active || panel.hasSession)
+			currentRow = append(currentRow, renderedPanel)
 
-	var borderColor lipgloss.Color
-	if panel.isOrphan {
-		borderColor = peach
-	} else {
-		borderColor = accent
-	}
-
-	panelStyle := lipgloss.NewStyle().
-		Width(panelWidth - 2).
-		Height(panelHeight).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor)
-
-	if isSelected {
-		panelStyle = panelStyle.
-			BorderForeground(successColor).
-			BorderBackground(surfaceBg)
-	}
-
-	numBadge := ""
-	if globalIdx < 9 {
-		numStyle := lipgloss.NewStyle().
-			Foreground(baseBg).
-			Background(teal).
-			Bold(true).
-			Padding(0, 1)
-		numBadge = numStyle.Render(fmt.Sprintf("%d", globalIdx+1)) + " "
-	}
-
-	trafficLights := lipgloss.NewStyle().Foreground(errorColor).Render("●") + " " +
-		lipgloss.NewStyle().Foreground(warnColor).Render("●") + " " +
-		lipgloss.NewStyle().Foreground(successColor).Render("●")
-
-	nameStyle := lipgloss.NewStyle().Foreground(textColor).Bold(true)
-	if isSelected {
-		nameStyle = nameStyle.Foreground(successColor)
-	}
-
-	displayName := panel.name
-	maxNameLen := panelWidth - 18
-	if maxNameLen < 5 {
-		maxNameLen = 5
-	}
-	if len(displayName) > maxNameLen {
-		displayName = displayName[:maxNameLen-1] + "…"
-	}
-
-	titleBar := numBadge + trafficLights + "  " + nameStyle.Render(displayName)
-
-	branchLine := ""
-	if panel.branch != "" {
-		branchDisplay := panel.branch
-		maxBranchLen := panelWidth - 8
-		if maxBranchLen < 5 {
-			maxBranchLen = 5
-		}
-		if len(branchDisplay) > maxBranchLen {
-			branchDisplay = branchDisplay[:maxBranchLen-1] + "…"
-		}
-		branchLine = "    " + branchStyle.Render(iconBranch+" "+branchDisplay)
-	}
-
-	contentLines := strings.Split(panel.content, "\n")
-	maxLines := panelHeight - 4
-	if len(contentLines) > maxLines {
-		contentLines = contentLines[len(contentLines)-maxLines:]
-	}
-
-	contentWidth := panelWidth - 6
-	if contentWidth < 10 {
-		contentWidth = 10
-	}
-	var displayLines []string
-	for _, line := range contentLines {
-		if len(line) > contentWidth {
-			line = line[:contentWidth-1] + "…"
-		}
-		displayLines = append(displayLines, dimStyle.Render(line))
-	}
-
-	var content string
-	if branchLine != "" {
-		content = titleBar + "\n" + branchLine + "\n" + strings.Join(displayLines, "\n")
-	} else {
-		content = titleBar + "\n" + strings.Join(displayLines, "\n")
-	}
-	renderedPanel := panelStyle.Render(content)
-
-	currentRow = append(currentRow, renderedPanel)
-
-	if len(currentRow) >= m.gridCols || localIdx == len(panels)-1 {
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, currentRow...))
-		currentRow = []string{}
-	}
+			if len(currentRow) >= m.gridCols || localIdx == len(panels)-1 {
+				rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, currentRow...))
+				currentRow = []string{}
+			}
 		}
 		return lipgloss.JoinVertical(lipgloss.Left, rows...)
 	}
 
 	var gridSections []string
-	if len(worktreePanels) > 0 {
+
+	renderActionItem := func(icon, title, desc string, selected bool) string {
+		if selected {
+			titleLine := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#94e2d5")).
+				Bold(true).
+				Render(icon + " " + title)
+			descLine := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#6c7086")).
+				Render("  " + desc)
+			return lipgloss.NewStyle().
+				Width(gridWidth).
+				Background(lipgloss.Color("#313244")).
+				BorderLeft(true).
+				BorderStyle(lipgloss.ThickBorder()).
+				BorderForeground(lipgloss.Color("#94e2d5")).
+				PaddingLeft(1).
+				Render(titleLine + "\n" + descLine)
+		}
+		titleLine := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#cdd6f4")).
+			Render(icon + " " + title)
+		descLine := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#6c7086")).
+			Render("  " + desc)
+		return lipgloss.NewStyle().
+			PaddingLeft(2).
+			Render(titleLine + "\n" + descLine)
+	}
+
+	newWorktreeItem := renderActionItem("+", "New Worktree", "Create worktree and session", m.gridIndex == -1 && !m.gridInAvailable)
+	listViewItem := renderActionItem("☰", "List View", "View all sessions", m.gridIndex == -2 && !m.gridInAvailable)
+	actionItems := lipgloss.NewStyle().MarginBottom(1).Render(newWorktreeItem + "\n" + listViewItem)
+	gridSections = append(gridSections, actionItems)
+
+	if len(sessionPanels) > 0 {
 		gridSections = append(gridSections, renderSectionHeader("SESSIONS"))
-		gridSections = append(gridSections, renderPanelGrid(worktreePanels, worktreeIndices))
+		gridSections = append(gridSections, renderPanelGrid(sessionPanels, sessionIndices, true))
+	}
+	if len(recentPanels) > 0 {
+		gridSections = append(gridSections, renderSectionHeader("RECENT"))
+		gridSections = append(gridSections, renderPanelGrid(recentPanels, recentIndices, true))
 	}
 	if len(orphanPanels) > 0 {
-		gridSections = append(gridSections, "")
 		gridSections = append(gridSections, renderSectionHeader("ORPHANED SESSIONS"))
-		gridSections = append(gridSections, renderPanelGrid(orphanPanels, orphanIndices))
+		gridSections = append(gridSections, renderPanelGrid(orphanPanels, orphanIndices, true))
 	}
 	if len(filteredPanels) == 0 && m.gridFiltering {
 		gridSections = append(gridSections, lipgloss.NewStyle().Foreground(dimColor).Render("No matching sessions"))
 	}
-	grid := lipgloss.JoinVertical(lipgloss.Left, gridSections...)
-
-	availableSection := ""
 	if len(m.gridAvailable) > 0 {
-		availHeader := lipgloss.NewStyle().
-			Foreground(dimColor).
-			MarginTop(1).
-			Render("─── Available Worktrees ───")
-		
-		var availItems []string
-		for i, wt := range m.gridAvailable {
-			style := dimStyle
-			if m.gridInAvailable && i == m.gridAvailIdx {
-				style = lipgloss.NewStyle().Foreground(successColor).Bold(true)
+		gridSections = append(gridSections, renderSectionHeader("AVAILABLE WORKTREES"))
+
+		var availRows []string
+		var availRow []string
+		for i, panel := range m.gridAvailable {
+			isSelected := m.gridInAvailable && i == m.gridAvailIdx
+			renderedPanel := renderPanel(panel, i, isSelected, false)
+			availRow = append(availRow, renderedPanel)
+
+			if len(availRow) >= m.gridCols || i == len(m.gridAvailable)-1 {
+				availRows = append(availRows, lipgloss.JoinHorizontal(lipgloss.Top, availRow...))
+				availRow = []string{}
 			}
-			item := style.Render(wt.name)
-			if wt.branch != "" {
-				item += " " + branchStyle.Render(wt.branch)
-			}
-			availItems = append(availItems, item)
 		}
-		availableSection = availHeader + "\n" + strings.Join(availItems, "  ")
+		gridSections = append(gridSections, lipgloss.JoinVertical(lipgloss.Left, availRows...))
 	}
 
-	gridWithAvail := grid
-	if availableSection != "" {
-		gridWithAvail = lipgloss.JoinVertical(lipgloss.Left, grid, availableSection)
+	grid := lipgloss.JoinVertical(lipgloss.Left, gridSections...)
+	headerHeight := 3
+	footerHeight := 3
+	availableHeight := m.height - headerHeight - footerHeight
+	if availableHeight < 1 {
+		availableHeight = 1
 	}
-	gridSection := lipgloss.NewStyle().Width(gridWidth).Render(gridWithAvail)
 
-	var selectedPanel gridPanel
-	if m.gridInAvailable && m.gridAvailIdx < len(m.gridAvailable) {
-		selectedPanel = m.gridAvailable[m.gridAvailIdx]
-	} else if m.gridIndex < len(filteredPanels) {
-		selectedPanel = filteredPanels[m.gridIndex]
+	panelLines := 7
+	actionItemsLines := 5
+	sectionHeaderLines := 3
+	var selectedLine int
+	sessionsLines := 0
+	if len(sessionPanels) > 0 {
+		sessionsLines = sectionHeaderLines + ((len(sessionPanels)+m.gridCols-1)/m.gridCols)*panelLines
 	}
-	sidebar := m.renderGridSidebarPanel(sidebarWidth, selectedPanel)
+	recentLines := 0
+	if len(recentPanels) > 0 {
+		recentLines = sectionHeaderLines + ((len(recentPanels)+m.gridCols-1)/m.gridCols)*panelLines
+	}
+	orphansLines := 0
+	if len(orphanPanels) > 0 {
+		orphansLines = sectionHeaderLines + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
+	}
+	noMatchLines := 0
+	if len(filteredPanels) == 0 && m.gridFiltering {
+		noMatchLines = 1
+	}
+	if m.gridInAvailable {
+		availRowIdx := m.gridAvailIdx / m.gridCols
+		selectedLine = actionItemsLines + sessionsLines + recentLines + orphansLines + noMatchLines + sectionHeaderLines + availRowIdx*panelLines
+	} else if m.gridIndex < 0 {
+		selectedLine = 0
+	} else {
+		if m.gridIndex < len(sessionPanels) {
+			rowIdx := m.gridIndex / m.gridCols
+			selectedLine = actionItemsLines + sectionHeaderLines + rowIdx*panelLines
+		} else if m.gridIndex < len(sessionPanels)+len(recentPanels) {
+			recentLocalIdx := m.gridIndex - len(sessionPanels)
+			rowIdx := recentLocalIdx / m.gridCols
+			selectedLine = actionItemsLines + sessionsLines + sectionHeaderLines + rowIdx*panelLines
+		} else {
+			orphanLocalIdx := m.gridIndex - len(sessionPanels) - len(recentPanels)
+			rowIdx := orphanLocalIdx / m.gridCols
+			selectedLine = actionItemsLines + sessionsLines + recentLines + sectionHeaderLines + rowIdx*panelLines
+		}
+	}
 
-	sepHeight := m.height - 6
-	if sepHeight < 1 {
-		sepHeight = 1
-	}
-	sepLines := []string{}
-	for i := 0; i < sepHeight; i++ {
-		sepLines = append(sepLines, lipgloss.NewStyle().Foreground(overlayColor).Render("│"))
-	}
-	separator := strings.Join(sepLines, "\n")
+	viewportHeight := availableHeight
 
-	body := lipgloss.JoinHorizontal(lipgloss.Top, gridSection, separator, sidebar)
+	if selectedLine < m.gridScrollOffset {
+		m.gridScrollOffset = selectedLine
+	} else if selectedLine+panelLines > m.gridScrollOffset+viewportHeight {
+		m.gridScrollOffset = selectedLine + panelLines - viewportHeight
+	}
+	if m.gridScrollOffset < 0 {
+		m.gridScrollOffset = 0
+	}
+
+	gridLines := strings.Split(grid, "\n")
+	startLine := m.gridScrollOffset
+	if startLine < 0 {
+		startLine = 0
+	}
+	endLine := startLine + availableHeight
+	if endLine > len(gridLines) {
+		endLine = len(gridLines)
+	}
+	if startLine > len(gridLines) {
+		startLine = len(gridLines)
+	}
+	visibleGrid := strings.Join(gridLines[startLine:endLine], "\n")
+	body := lipgloss.NewStyle().Height(availableHeight).MarginLeft(2).Render(visibleGrid)
 	
 	footer := lipgloss.NewStyle().
 		BorderTop(true).
@@ -2096,6 +2499,137 @@ func (m *model) renderGridView() string {
 		Render(hint)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+func (m *model) renderGridDetail() string {
+	if m.gridDetailPanel == nil {
+		return ""
+	}
+	panel := m.gridDetailPanel
+
+	modalWidth := 60
+	if m.width < 70 {
+		modalWidth = m.width - 10
+	}
+	if modalWidth < 40 {
+		modalWidth = 40
+	}
+
+	trafficRed := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5f56")).Render("●")
+	trafficYellow := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffbd2e")).Render("●")
+	trafficGreen := lipgloss.NewStyle().Foreground(lipgloss.Color("#27c93f")).Render("●")
+	traffic := trafficRed + " " + trafficYellow + " " + trafficGreen
+
+	titleBar := lipgloss.NewStyle().
+		Width(modalWidth - 2).
+		Background(lipgloss.Color("#313244")).
+		Padding(0, 1).
+		Render(traffic + "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4")).Bold(true).Render(panel.name))
+
+	var infoLines []string
+
+	if panel.branch != "" {
+		infoLines = append(infoLines, lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Render("⎇ "+panel.branch))
+	}
+	if panel.path != "" {
+		pathDisplay := panel.path
+		maxPath := modalWidth - 8
+		if len(pathDisplay) > maxPath {
+			pathDisplay = "…" + pathDisplay[len(pathDisplay)-maxPath+1:]
+		}
+		infoLines = append(infoLines, lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")).Render("  "+pathDisplay))
+	}
+
+	if panel.hasSession {
+		sessionInfo := lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")).Render("● active")
+		if panel.windows > 0 {
+			sessionInfo += lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")).Render(fmt.Sprintf("  %d windows, %d panes", panel.windows, panel.panes))
+		}
+		infoLines = append(infoLines, sessionInfo)
+	} else {
+		infoLines = append(infoLines, lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")).Render("○ no active session"))
+	}
+
+	if panel.modified > 0 || panel.staged > 0 {
+		var parts []string
+		if panel.modified > 0 {
+			parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("#f9e2af")).Render(fmt.Sprintf("%d modified", panel.modified)))
+		}
+		if panel.staged > 0 {
+			parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")).Render(fmt.Sprintf("%d staged", panel.staged)))
+		}
+		infoLines = append(infoLines, strings.Join(parts, "  "))
+	}
+
+	infoSection := lipgloss.NewStyle().
+		Width(modalWidth - 4).
+		Padding(1, 1).
+		Render(strings.Join(infoLines, "\n"))
+
+	divider := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#313244")).
+		Render(strings.Repeat("─", modalWidth-2))
+
+	type actionItem struct {
+		label string
+		key   string
+	}
+	var actions []actionItem
+	if panel.hasSession {
+		actions = append(actions, actionItem{"Jump to session", "enter"})
+		if panel.isOrphan {
+			actions = append(actions, actionItem{"Adopt session", "a"})
+			actions = append(actions, actionItem{"Kill session", "x"})
+		} else {
+			actions = append(actions, actionItem{"Kill session", "x"})
+		}
+	} else {
+		actions = append(actions, actionItem{"Start session", "enter"})
+	}
+	actions = append(actions, actionItem{"Back", "esc"})
+
+	var actionLines []string
+	for i, action := range actions {
+		isSelected := i == m.gridDetailIdx
+
+		keyStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#313244")).
+			Background(lipgloss.Color("#6c7086")).
+			Padding(0, 1)
+
+		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
+
+		if isSelected {
+			keyStyle = keyStyle.Background(lipgloss.Color("#a6e3a1")).Foreground(lipgloss.Color("#1e1e2e"))
+			labelStyle = labelStyle.Foreground(lipgloss.Color("#cdd6f4")).Bold(true)
+		}
+
+		line := keyStyle.Render(action.key) + " " + labelStyle.Render(action.label)
+		actionLines = append(actionLines, line)
+	}
+
+	actionSection := lipgloss.NewStyle().
+		Width(modalWidth - 4).
+		Padding(1, 1).
+		Render(strings.Join(actionLines, "\n"))
+
+	modalContent := lipgloss.JoinVertical(lipgloss.Left,
+		titleBar,
+		infoSection,
+		divider,
+		actionSection,
+	)
+
+	modal := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#45475a")).
+		Render(modalContent)
+
+	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")).Render("↑↓/tab navigate  enter confirm  esc back")
+
+	modalWithHint := lipgloss.JoinVertical(lipgloss.Center, modal, "", hint)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalWithHint)
 }
 
 func (m *model) renderGridSidebarPanel(width int, panel gridPanel) string {
