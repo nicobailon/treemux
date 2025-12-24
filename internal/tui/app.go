@@ -911,7 +911,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	// Handle navigation to skip non-selectable items
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.state != stateGridView {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.state != stateGridView && m.state != stateGridDetail {
 		switch keyMsg.String() {
 		case "j", "down":
 			m.list, cmd = m.list.Update(msg)
@@ -932,7 +932,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.state != stateGridView {
+	if m.state != stateGridView && m.state != stateGridDetail {
 		m.list, cmd = m.list.Update(msg)
 		cmds = append(cmds, cmd)
 	}
