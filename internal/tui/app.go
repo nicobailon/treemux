@@ -1172,26 +1172,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.state == stateGridView {
 				filteredLen := len(m.getFilteredGridPanels())
-				totalItems := filteredLen + len(m.gridAvailable)
-				if totalItems > 0 {
-					if m.gridInAvailable {
-						if m.gridAvailIdx < len(m.gridAvailable)-1 {
-							m.gridAvailIdx++
-						} else if filteredLen > 0 {
-							m.gridInAvailable = false
-							m.gridIndex = 0
-						} else {
-							m.gridAvailIdx = 0
-						}
+				if m.gridIndex == -1 {
+					m.gridIndex = -2
+					return m, nil
+				}
+				if m.gridIndex == -2 {
+					if filteredLen > 0 {
+						m.gridIndex = 0
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
 					} else {
-						if m.gridIndex < filteredLen-1 {
-							m.gridIndex++
-						} else if len(m.gridAvailable) > 0 {
-							m.gridInAvailable = true
-							m.gridAvailIdx = 0
-						} else if filteredLen > 0 {
-							m.gridIndex = 0
-						}
+						m.gridIndex = -1
+					}
+					return m, nil
+				}
+				if m.gridInAvailable {
+					if m.gridAvailIdx < len(m.gridAvailable)-1 {
+						m.gridAvailIdx++
+					} else {
+						m.gridInAvailable = false
+						m.gridIndex = -1
+					}
+				} else {
+					if m.gridIndex < filteredLen-1 {
+						m.gridIndex++
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
+					} else {
+						m.gridIndex = -1
 					}
 				}
 				return m, nil
@@ -1206,23 +1216,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab":
 			if m.state == stateGridView {
 				filteredLen := len(m.getFilteredGridPanels())
+				if m.gridIndex == -1 {
+					if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = len(m.gridAvailable) - 1
+					} else if filteredLen > 0 {
+						m.gridIndex = filteredLen - 1
+					}
+					return m, nil
+				}
+				if m.gridIndex == -2 {
+					m.gridIndex = -1
+					return m, nil
+				}
+				if m.gridIndex == 0 {
+					m.gridIndex = -2
+					return m, nil
+				}
 				if m.gridInAvailable {
 					if m.gridAvailIdx > 0 {
 						m.gridAvailIdx--
 					} else if filteredLen > 0 {
 						m.gridInAvailable = false
 						m.gridIndex = filteredLen - 1
-					} else if len(m.gridAvailable) > 0 {
-						m.gridAvailIdx = len(m.gridAvailable) - 1
+					} else {
+						m.gridInAvailable = false
+						m.gridIndex = -2
 					}
 				} else {
 					if m.gridIndex > 0 {
 						m.gridIndex--
-					} else if len(m.gridAvailable) > 0 {
-						m.gridInAvailable = true
-						m.gridAvailIdx = len(m.gridAvailable) - 1
-					} else if filteredLen > 0 {
-						m.gridIndex = filteredLen - 1
+					} else {
+						m.gridIndex = -2
 					}
 				}
 				return m, nil
@@ -1272,6 +1297,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "left", "h":
 			if m.state == stateGridView {
+				if m.gridIndex == -1 {
+					return m, nil
+				}
+				if m.gridIndex == -2 {
+					m.gridIndex = -1
+					return m, nil
+				}
+				if m.gridIndex == 0 {
+					m.gridIndex = -2
+					return m, nil
+				}
 				if m.gridInAvailable {
 					if m.gridAvailIdx > 0 {
 						m.gridAvailIdx--
@@ -1280,6 +1316,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if filteredLen > 0 {
 							m.gridInAvailable = false
 							m.gridIndex = filteredLen - 1
+						} else {
+							m.gridInAvailable = false
+							m.gridIndex = -2
 						}
 					}
 				} else if m.gridIndex > 0 {
@@ -1289,6 +1328,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "right", "l":
 			if m.state == stateGridView {
+				if m.gridIndex == -1 {
+					m.gridIndex = -2
+					return m, nil
+				}
+				if m.gridIndex == -2 {
+					filteredLen := len(m.getFilteredGridPanels())
+					if filteredLen > 0 {
+						m.gridIndex = 0
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
+					}
+					return m, nil
+				}
 				if m.gridInAvailable {
 					if m.gridAvailIdx < len(m.gridAvailable)-1 {
 						m.gridAvailIdx++
