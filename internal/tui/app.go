@@ -40,6 +40,33 @@ const (
 
 const defaultRefreshInterval = 3 * time.Second
 
+var (
+	cachedDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
+	cachedSuccessColor  = lipgloss.Color("#a6e3a1")
+	cachedTealColor     = lipgloss.Color("#94e2d5")
+	cachedBlueColor     = lipgloss.Color("#89b4fa")
+	cachedTextColor     = lipgloss.Color("#cdd6f4")
+	cachedMutedColor    = lipgloss.Color("#45475a")
+	cachedBorderColor   = lipgloss.Color("#313244")
+	cachedBgColor       = lipgloss.Color("#1e1e2e")
+	cachedOverlayColor  = lipgloss.Color("#313244")
+	
+	cachedPanelBorder       = lipgloss.RoundedBorder()
+	cachedTrafficActive     = lipgloss.NewStyle().Foreground(cachedSuccessColor).Render("●●●")
+	cachedTrafficInactive   = lipgloss.NewStyle().Foreground(cachedMutedColor).Render("●●●")
+	cachedBranchStyle       = lipgloss.NewStyle().Foreground(cachedBlueColor)
+	cachedActiveStyle       = lipgloss.NewStyle().Foreground(cachedSuccessColor)
+	cachedInactiveStyle     = lipgloss.NewStyle().Foreground(cachedMutedColor)
+	cachedNameStyle         = lipgloss.NewStyle().Foreground(cachedTextColor)
+	cachedNameSelectedStyle = lipgloss.NewStyle().Foreground(cachedSuccessColor).Bold(true)
+	cachedNameMutedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
+	cachedGridLogo          = lipgloss.NewStyle().Foreground(cachedSuccessColor).Bold(true).Render("▲ ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c2e7")).Bold(true).Render("tree") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#cba6f7")).Bold(true).Render("mu") +
+		lipgloss.NewStyle().Foreground(cachedBlueColor).Bold(true).Render("x")
+	cachedInactiveText = cachedInactiveStyle.Render("○ inactive")
+)
+
 type itemKind int
 
 const (
@@ -2309,11 +2336,7 @@ func (m *model) renderGridView() string {
 	panelWidth := gridWidth / m.gridCols
 	innerWidth := panelWidth - 4
 
-	t1 := lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c2e7")).Bold(true)
-	t2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#cba6f7")).Bold(true)
-	t3 := lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Bold(true)
-	title := lipgloss.NewStyle().Foreground(successColor).Bold(true).Render("▲ ") +
-		t1.Render("tree") + t2.Render("mu") + t3.Render("x")
+	title := cachedGridLogo
 
 	if m.gridFiltering {
 		filterStyle := lipgloss.NewStyle().
@@ -2356,29 +2379,25 @@ func (m *model) renderGridView() string {
 		}
 	}
 
+	sectionHeaderStyle := cachedDimStyle.MarginTop(1).MarginBottom(1)
 	renderSectionHeader := func(text string) string {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#6c7086")).
-			MarginTop(1).
-			MarginBottom(1).
-			Render("── " + text + " " + strings.Repeat("─", gridWidth-len(text)-5))
+		return sectionHeaderStyle.Render("── " + text + " " + strings.Repeat("─", gridWidth-len(text)-5))
 	}
 
 	renderPanel := func(panel gridPanel, globalIdx int, isSelected bool, isActive bool) string {
-		borderColor := lipgloss.Color("#313244")
-		titleBg := lipgloss.Color("#1e1e2e")
+		borderColor := cachedBorderColor
+		titleBg := cachedBgColor
 		if isSelected {
-			borderColor = successColor
-			titleBg = lipgloss.Color("#313244")
+			borderColor = cachedSuccessColor
+			titleBg = cachedBorderColor
 		}
 
-		trafficStyle := lipgloss.NewStyle()
+		var traffic string
 		if isActive {
-			trafficStyle = trafficStyle.Foreground(lipgloss.Color("#a6e3a1"))
+			traffic = cachedTrafficActive
 		} else {
-			trafficStyle = trafficStyle.Foreground(lipgloss.Color("#45475a"))
+			traffic = cachedTrafficInactive
 		}
-		traffic := trafficStyle.Render("●●●")
 
 		displayName := panel.name
 		maxNameLen := innerWidth - 8
@@ -2389,11 +2408,13 @@ func (m *model) renderGridView() string {
 			displayName = displayName[:maxNameLen-1] + "…"
 		}
 
-		nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4"))
+		var nameStyle lipgloss.Style
 		if isSelected {
-			nameStyle = nameStyle.Foreground(successColor).Bold(true)
+			nameStyle = cachedNameSelectedStyle
 		} else if !isActive {
-			nameStyle = nameStyle.Foreground(lipgloss.Color("#6c7086"))
+			nameStyle = cachedNameMutedStyle
+		} else {
+			nameStyle = cachedNameStyle
 		}
 
 		titleContent := traffic + " " + nameStyle.Render(displayName)
@@ -2410,23 +2431,23 @@ func (m *model) renderGridView() string {
 			if len(branchDisplay) > maxBranchLen {
 				branchDisplay = branchDisplay[:maxBranchLen-1] + "…"
 			}
-			line1 = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Render("⎇ " + branchDisplay)
+			line1 = cachedBranchStyle.Render("⎇ " + branchDisplay)
 		}
 
-		line2 := ""
+		var line2 string
 		if isActive {
 			statusText := "● active"
 			if panel.windows > 0 {
 				statusText += fmt.Sprintf(" %dw %dp", panel.windows, panel.panes)
 			}
-			line2 = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")).Render(statusText)
+			line2 = cachedActiveStyle.Render(statusText)
 		} else {
-			line2 = lipgloss.NewStyle().Foreground(lipgloss.Color("#45475a")).Render("○ inactive")
+			line2 = cachedInactiveText
 		}
 
 		line3 := ""
 		if globalIdx < 9 {
-			line3 = lipgloss.NewStyle().Foreground(lipgloss.Color("#45475a")).Render(fmt.Sprintf("[%d]", globalIdx+1))
+			line3 = cachedInactiveStyle.Render(fmt.Sprintf("[%d]", globalIdx+1))
 		}
 
 		content := lipgloss.NewStyle().
@@ -2439,7 +2460,7 @@ func (m *model) renderGridView() string {
 
 		return lipgloss.NewStyle().
 			Width(panelWidth - 2).
-			Border(lipgloss.RoundedBorder()).
+			Border(cachedPanelBorder).
 			BorderForeground(borderColor).
 			Render(panelContent)
 	}
