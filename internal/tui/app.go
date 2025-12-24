@@ -1015,6 +1015,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.state == stateGridDetail && m.gridDetailPanel != nil {
 				panel := m.gridDetailPanel
+				backIdx := 1
+				if panel.hasSession {
+					backIdx = 2
+				}
+				if panel.isOrphan {
+					backIdx = 3
+				}
+				if m.gridDetailIdx == backIdx {
+					m.state = stateGridView
+					m.gridDetailPanel = nil
+					return m, nil
+				}
 				switch m.gridDetailIdx {
 				case 0:
 					if panel.hasSession {
@@ -1118,12 +1130,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "tab":
 			if m.state == stateGridDetail && m.gridDetailPanel != nil {
-				maxIdx := 0
+				maxIdx := 1
 				if m.gridDetailPanel.hasSession {
-					maxIdx = 1
+					maxIdx = 2
 				}
 				if m.gridDetailPanel.isOrphan {
-					maxIdx = 2
+					maxIdx = 3
 				}
 				m.gridDetailIdx++
 				if m.gridDetailIdx > maxIdx {
@@ -1322,12 +1334,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "down", "j":
 			if m.state == stateGridDetail && m.gridDetailPanel != nil {
-				maxIdx := 0
+				maxIdx := 1
 				if m.gridDetailPanel.hasSession {
-					maxIdx = 1
+					maxIdx = 2
 				}
 				if m.gridDetailPanel.isOrphan {
-					maxIdx = 2
+					maxIdx = 3
 				}
 				if m.gridDetailIdx < maxIdx {
 					m.gridDetailIdx++
@@ -2428,6 +2440,7 @@ func (m *model) renderGridDetail() string {
 	} else {
 		actions = append(actions, actionItem{"Start session", "enter"})
 	}
+	actions = append(actions, actionItem{"Back", "esc"})
 
 	var actionLines []string
 	for i, action := range actions {
