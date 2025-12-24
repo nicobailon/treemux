@@ -2269,7 +2269,7 @@ func (m *model) renderGridView() string {
 		startLine = len(gridLines)
 	}
 	visibleGrid := strings.Join(gridLines[startLine:endLine], "\n")
-	body := lipgloss.NewStyle().Width(gridWidth).Height(availableHeight).Padding(0, 2).Render(visibleGrid)
+	body := lipgloss.NewStyle().Height(availableHeight).MarginLeft(2).Render(visibleGrid)
 	
 	footer := lipgloss.NewStyle().
 		BorderTop(true).
