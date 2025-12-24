@@ -995,13 +995,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.state == stateGridView {
+				if m.gridIndex == -1 {
+					if m.globalMode {
+						repos := extractUniqueRepos(m.globalWorktrees)
+						if len(repos) == 0 {
+							m.toast = &toast{message: "No repositories found", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
+							return m, toastExpireCmd()
+						}
+						m.availableRepos = repos
+						items := make([]list.Item, len(repos))
+						for i, r := range repos {
+							items[i] = listItem{title: r.name, desc: r.root, kind: kindHeader}
+						}
+						m.menu.SetItems(items)
+						m.menu.Select(0)
+						m.state = stateSelectRepo
+						return m, nil
+					}
+					m.state = stateCreateName
+					m.input.SetValue("")
+					return m, m.input.Focus()
+				}
+				if m.gridIndex == -2 {
+					m.state = stateMain
+					return m, nil
+				}
 				var panel *gridPanel
 				if m.gridInAvailable && m.gridAvailIdx < len(m.gridAvailable) {
 					p := m.gridAvailable[m.gridAvailIdx]
 					panel = &p
 				} else {
 					filteredPanels := m.getFilteredGridPanels()
-					if m.gridIndex < len(filteredPanels) {
+					if m.gridIndex >= 0 && m.gridIndex < len(filteredPanels) {
 						p := filteredPanels[m.gridIndex]
 						panel = &p
 					}
@@ -1293,11 +1318,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if len(filteredPanels) > 0 {
 							m.gridInAvailable = false
 							m.gridIndex = len(filteredPanels) - 1
+						} else {
+							m.gridInAvailable = false
+							m.gridIndex = -2
 						}
 					}
+				} else if m.gridIndex == -1 {
+					return m, nil
+				} else if m.gridIndex == -2 {
+					m.gridIndex = -1
 				} else {
 					filteredPanels := m.getFilteredGridPanels()
 					if m.gridIndex >= len(filteredPanels) || len(filteredPanels) == 0 {
+						m.gridIndex = -2
 						return m, nil
 					}
 					var sessionCount, recentCount int
@@ -1316,6 +1349,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.gridIndex -= m.gridCols
 						} else if firstOrphanIdx > 0 {
 							m.gridIndex = firstOrphanIdx - 1
+						} else {
+							m.gridIndex = -2
 						}
 					} else if currentPanel.isRecent {
 						localIdx := m.gridIndex - sessionCount
@@ -1323,10 +1358,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.gridIndex -= m.gridCols
 						} else if sessionCount > 0 {
 							m.gridIndex = sessionCount - 1
+						} else {
+							m.gridIndex = -2
 						}
 					} else {
 						if m.gridIndex >= m.gridCols {
 							m.gridIndex -= m.gridCols
+						} else {
+							m.gridIndex = -2
 						}
 					}
 				}
@@ -1355,6 +1394,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if nextRowStart < len(m.gridAvailable) {
 							m.gridAvailIdx = nextRowStart
 						}
+					}
+					return m, nil
+				}
+				if m.gridIndex == -1 {
+					m.gridIndex = -2
+					return m, nil
+				}
+				if m.gridIndex == -2 {
+					filteredPanels := m.getFilteredGridPanels()
+					if len(filteredPanels) > 0 {
+						m.gridIndex = 0
+					} else if len(m.gridAvailable) > 0 {
+						m.gridInAvailable = true
+						m.gridAvailIdx = 0
 					}
 					return m, nil
 				}
@@ -2242,6 +2295,21 @@ func (m *model) renderGridView() string {
 	}
 
 	var gridSections []string
+
+	newWorktreeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
+	listViewStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
+	if m.gridIndex == -1 && !m.gridInAvailable {
+		newWorktreeStyle = lipgloss.NewStyle().Foreground(successColor).Bold(true)
+	}
+	if m.gridIndex == -2 && !m.gridInAvailable {
+		listViewStyle = lipgloss.NewStyle().Foreground(successColor).Bold(true)
+	}
+	actionItems := lipgloss.NewStyle().MarginBottom(1).Render(
+		newWorktreeStyle.Render("+ New Worktree") + "\n" +
+			listViewStyle.Render("☰ List View"),
+	)
+	gridSections = append(gridSections, actionItems)
+
 	if len(sessionPanels) > 0 {
 		gridSections = append(gridSections, renderSectionHeader("SESSIONS"))
 		gridSections = append(gridSections, renderPanelGrid(sessionPanels, sessionIndices, true))
