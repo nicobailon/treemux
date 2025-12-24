@@ -49,7 +49,6 @@ var (
 	cachedMutedColor    = lipgloss.Color("#45475a")
 	cachedBorderColor   = lipgloss.Color("#313244")
 	cachedBgColor       = lipgloss.Color("#1e1e2e")
-	cachedOverlayColor  = lipgloss.Color("#313244")
 	
 	cachedPanelBorder       = lipgloss.RoundedBorder()
 	cachedTrafficActive     = lipgloss.NewStyle().Foreground(cachedSuccessColor).Render("●●●")
@@ -64,7 +63,10 @@ var (
 		lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c2e7")).Bold(true).Render("tree") +
 		lipgloss.NewStyle().Foreground(lipgloss.Color("#cba6f7")).Bold(true).Render("mu") +
 		lipgloss.NewStyle().Foreground(cachedBlueColor).Bold(true).Render("x")
-	cachedInactiveText = cachedInactiveStyle.Render("○ inactive")
+	cachedInactiveText      = cachedInactiveStyle.Render("○ inactive")
+	cachedActionTitleStyle  = lipgloss.NewStyle().Foreground(cachedTealColor).Bold(true)
+	cachedActionDescStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
+	cachedActionNormalStyle = lipgloss.NewStyle().Foreground(cachedTextColor)
 )
 
 type itemKind int
@@ -2489,28 +2491,19 @@ func (m *model) renderGridView() string {
 
 	renderActionItem := func(icon, title, desc string, selected bool) string {
 		if selected {
-			titleLine := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#94e2d5")).
-				Bold(true).
-				Render(icon + " " + title)
-			descLine := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#6c7086")).
-				Render("  " + desc)
+			titleLine := cachedActionTitleStyle.Render(icon + " " + title)
+			descLine := cachedActionDescStyle.Render("  " + desc)
 			return lipgloss.NewStyle().
 				Width(gridWidth).
-				Background(lipgloss.Color("#313244")).
+				Background(cachedBorderColor).
 				BorderLeft(true).
 				BorderStyle(lipgloss.ThickBorder()).
-				BorderForeground(lipgloss.Color("#94e2d5")).
+				BorderForeground(cachedTealColor).
 				PaddingLeft(1).
 				Render(titleLine + "\n" + descLine)
 		}
-		titleLine := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#cdd6f4")).
-			Render(icon + " " + title)
-		descLine := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#6c7086")).
-			Render("  " + desc)
+		titleLine := cachedActionNormalStyle.Render(icon + " " + title)
+		descLine := cachedActionDescStyle.Render("  " + desc)
 		return lipgloss.NewStyle().
 			PaddingLeft(2).
 			Render(titleLine + "\n" + descLine)
