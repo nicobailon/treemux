@@ -1615,6 +1615,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// not used
 	}
 
+	if m.state == stateGridView || m.state == stateGridDetail {
+		m.updateGridScroll()
+	}
 	
 	return m, tea.Batch(cmds...)
 }
@@ -1655,6 +1658,91 @@ func (m *model) getFilteredGridPanels() []gridPanel {
 		}
 	}
 	return filtered
+}
+
+func (m *model) updateGridScroll() {
+	gridWidth := m.width - 4
+	if gridWidth < 32 {
+		gridWidth = 32
+	}
+	minPanelWidth := 32
+	m.gridCols = gridWidth / minPanelWidth
+	if m.gridCols < 1 {
+		m.gridCols = 1
+	}
+	if m.gridCols > 4 {
+		m.gridCols = 4
+	}
+
+	filteredPanels := m.getFilteredGridPanels()
+	var sessionPanels, recentPanels, orphanPanels []gridPanel
+	for _, p := range filteredPanels {
+		if p.isOrphan {
+			orphanPanels = append(orphanPanels, p)
+		} else if p.isRecent {
+			recentPanels = append(recentPanels, p)
+		} else {
+			sessionPanels = append(sessionPanels, p)
+		}
+	}
+
+	headerHeight := 3
+	footerHeight := 3
+	availableHeight := m.height - headerHeight - footerHeight
+	if availableHeight < 1 {
+		availableHeight = 1
+	}
+
+	panelLines := 6
+	actionItemsLines := 5
+	sectionHeaderLines := 3
+
+	sessionsLines := 0
+	if len(sessionPanels) > 0 {
+		sessionsLines = sectionHeaderLines + ((len(sessionPanels)+m.gridCols-1)/m.gridCols)*panelLines
+	}
+	recentLines := 0
+	if len(recentPanels) > 0 {
+		recentLines = sectionHeaderLines + ((len(recentPanels)+m.gridCols-1)/m.gridCols)*panelLines
+	}
+	orphansLines := 0
+	if len(orphanPanels) > 0 {
+		orphansLines = sectionHeaderLines + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
+	}
+	noMatchLines := 0
+	if len(filteredPanels) == 0 && m.gridFiltering {
+		noMatchLines = 1
+	}
+
+	var selectedLine int
+	if m.gridInAvailable {
+		availRowIdx := m.gridAvailIdx / m.gridCols
+		selectedLine = actionItemsLines + sessionsLines + recentLines + orphansLines + noMatchLines + sectionHeaderLines + availRowIdx*panelLines
+	} else if m.gridIndex < 0 {
+		selectedLine = 0
+	} else {
+		if m.gridIndex < len(sessionPanels) {
+			rowIdx := m.gridIndex / m.gridCols
+			selectedLine = actionItemsLines + sectionHeaderLines + rowIdx*panelLines
+		} else if m.gridIndex < len(sessionPanels)+len(recentPanels) {
+			recentLocalIdx := m.gridIndex - len(sessionPanels)
+			rowIdx := recentLocalIdx / m.gridCols
+			selectedLine = actionItemsLines + sessionsLines + sectionHeaderLines + rowIdx*panelLines
+		} else {
+			orphanLocalIdx := m.gridIndex - len(sessionPanels) - len(recentPanels)
+			rowIdx := orphanLocalIdx / m.gridCols
+			selectedLine = actionItemsLines + sessionsLines + recentLines + sectionHeaderLines + rowIdx*panelLines
+		}
+	}
+
+	if selectedLine < m.gridScrollOffset {
+		m.gridScrollOffset = selectedLine
+	} else if selectedLine+panelLines > m.gridScrollOffset+availableHeight {
+		m.gridScrollOffset = selectedLine + panelLines - availableHeight
+	}
+	if m.gridScrollOffset < 0 {
+		m.gridScrollOffset = 0
+	}
 }
 
 func (m *model) buildGridPanels() {
@@ -2451,57 +2539,6 @@ func (m *model) renderGridView() string {
 	availableHeight := m.height - headerHeight - footerHeight
 	if availableHeight < 1 {
 		availableHeight = 1
-	}
-
-	panelLines := 7
-	actionItemsLines := 5
-	sectionHeaderLines := 3
-	var selectedLine int
-	sessionsLines := 0
-	if len(sessionPanels) > 0 {
-		sessionsLines = sectionHeaderLines + ((len(sessionPanels)+m.gridCols-1)/m.gridCols)*panelLines
-	}
-	recentLines := 0
-	if len(recentPanels) > 0 {
-		recentLines = sectionHeaderLines + ((len(recentPanels)+m.gridCols-1)/m.gridCols)*panelLines
-	}
-	orphansLines := 0
-	if len(orphanPanels) > 0 {
-		orphansLines = sectionHeaderLines + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
-	}
-	noMatchLines := 0
-	if len(filteredPanels) == 0 && m.gridFiltering {
-		noMatchLines = 1
-	}
-	if m.gridInAvailable {
-		availRowIdx := m.gridAvailIdx / m.gridCols
-		selectedLine = actionItemsLines + sessionsLines + recentLines + orphansLines + noMatchLines + sectionHeaderLines + availRowIdx*panelLines
-	} else if m.gridIndex < 0 {
-		selectedLine = 0
-	} else {
-		if m.gridIndex < len(sessionPanels) {
-			rowIdx := m.gridIndex / m.gridCols
-			selectedLine = actionItemsLines + sectionHeaderLines + rowIdx*panelLines
-		} else if m.gridIndex < len(sessionPanels)+len(recentPanels) {
-			recentLocalIdx := m.gridIndex - len(sessionPanels)
-			rowIdx := recentLocalIdx / m.gridCols
-			selectedLine = actionItemsLines + sessionsLines + sectionHeaderLines + rowIdx*panelLines
-		} else {
-			orphanLocalIdx := m.gridIndex - len(sessionPanels) - len(recentPanels)
-			rowIdx := orphanLocalIdx / m.gridCols
-			selectedLine = actionItemsLines + sessionsLines + recentLines + sectionHeaderLines + rowIdx*panelLines
-		}
-	}
-
-	viewportHeight := availableHeight
-
-	if selectedLine < m.gridScrollOffset {
-		m.gridScrollOffset = selectedLine
-	} else if selectedLine+panelLines > m.gridScrollOffset+viewportHeight {
-		m.gridScrollOffset = selectedLine + panelLines - viewportHeight
-	}
-	if m.gridScrollOffset < 0 {
-		m.gridScrollOffset = 0
 	}
 
 	gridLines := strings.Split(grid, "\n")
