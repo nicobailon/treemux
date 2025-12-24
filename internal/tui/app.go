@@ -2541,8 +2541,60 @@ func (m *model) renderGridView() string {
 		availableHeight = 1
 	}
 
+	panelLines := 6
+	actionItemsLines := 5
+	sectionHeaderLines := 3
+
+	sessionsLines := 0
+	if len(sessionPanels) > 0 {
+		sessionsLines = sectionHeaderLines + ((len(sessionPanels)+m.gridCols-1)/m.gridCols)*panelLines
+	}
+	recentLines := 0
+	if len(recentPanels) > 0 {
+		recentLines = sectionHeaderLines + ((len(recentPanels)+m.gridCols-1)/m.gridCols)*panelLines
+	}
+	orphansLines := 0
+	if len(orphanPanels) > 0 {
+		orphansLines = sectionHeaderLines + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
+	}
+	noMatchLines := 0
+	if len(filteredPanels) == 0 && m.gridFiltering {
+		noMatchLines = 1
+	}
+
+	var selectedLine int
+	if m.gridInAvailable {
+		availRowIdx := m.gridAvailIdx / m.gridCols
+		selectedLine = actionItemsLines + sessionsLines + recentLines + orphansLines + noMatchLines + sectionHeaderLines + availRowIdx*panelLines
+	} else if m.gridIndex < 0 {
+		selectedLine = 0
+	} else {
+		if m.gridIndex < len(sessionPanels) {
+			rowIdx := m.gridIndex / m.gridCols
+			selectedLine = actionItemsLines + sectionHeaderLines + rowIdx*panelLines
+		} else if m.gridIndex < len(sessionPanels)+len(recentPanels) {
+			recentLocalIdx := m.gridIndex - len(sessionPanels)
+			rowIdx := recentLocalIdx / m.gridCols
+			selectedLine = actionItemsLines + sessionsLines + sectionHeaderLines + rowIdx*panelLines
+		} else {
+			orphanLocalIdx := m.gridIndex - len(sessionPanels) - len(recentPanels)
+			rowIdx := orphanLocalIdx / m.gridCols
+			selectedLine = actionItemsLines + sessionsLines + recentLines + sectionHeaderLines + rowIdx*panelLines
+		}
+	}
+
+	scrollOffset := m.gridScrollOffset
+	if selectedLine < scrollOffset {
+		scrollOffset = selectedLine
+	} else if selectedLine+panelLines > scrollOffset+availableHeight {
+		scrollOffset = selectedLine + panelLines - availableHeight
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
 	gridLines := strings.Split(grid, "\n")
-	startLine := m.gridScrollOffset
+	startLine := scrollOffset
 	if startLine < 0 {
 		startLine = 0
 	}
