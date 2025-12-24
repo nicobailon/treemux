@@ -2296,18 +2296,38 @@ func (m *model) renderGridView() string {
 
 	var gridSections []string
 
-	newWorktreeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
-	listViewStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
-	if m.gridIndex == -1 && !m.gridInAvailable {
-		newWorktreeStyle = lipgloss.NewStyle().Foreground(successColor).Bold(true)
+	renderActionItem := func(icon, title, desc string, selected bool) string {
+		if selected {
+			titleLine := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#94e2d5")).
+				Bold(true).
+				Render(icon + " " + title)
+			descLine := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#6c7086")).
+				Render("  " + desc)
+			return lipgloss.NewStyle().
+				Width(gridWidth).
+				Background(lipgloss.Color("#313244")).
+				BorderLeft(true).
+				BorderStyle(lipgloss.ThickBorder()).
+				BorderForeground(lipgloss.Color("#94e2d5")).
+				PaddingLeft(1).
+				Render(titleLine + "\n" + descLine)
+		}
+		titleLine := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#cdd6f4")).
+			Render(icon + " " + title)
+		descLine := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#6c7086")).
+			Render("  " + desc)
+		return lipgloss.NewStyle().
+			PaddingLeft(2).
+			Render(titleLine + "\n" + descLine)
 	}
-	if m.gridIndex == -2 && !m.gridInAvailable {
-		listViewStyle = lipgloss.NewStyle().Foreground(successColor).Bold(true)
-	}
-	actionItems := lipgloss.NewStyle().MarginBottom(1).Render(
-		newWorktreeStyle.Render("+ New Worktree") + "\n" +
-			listViewStyle.Render("☰ List View"),
-	)
+
+	newWorktreeItem := renderActionItem("+", "New Worktree", "Create worktree and session", m.gridIndex == -1 && !m.gridInAvailable)
+	listViewItem := renderActionItem("☰", "List View", "View all sessions", m.gridIndex == -2 && !m.gridInAvailable)
+	actionItems := lipgloss.NewStyle().MarginBottom(1).Render(newWorktreeItem + "\n" + listViewItem)
 	gridSections = append(gridSections, actionItems)
 
 	if len(sessionPanels) > 0 {
