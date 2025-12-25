@@ -1359,7 +1359,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateMain
 				return m, nil
 			}
-		case "left", "h":
+		case "left":
 			if m.state == stateGridView {
 				if m.gridIndex == -1 {
 					return m, nil
@@ -1392,7 +1392,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-		case "right", "l":
+		case "right":
 			if m.state == stateGridView {
 				if m.gridIndex == -1 {
 					m.gridIndex = -2
@@ -1423,7 +1423,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-		case "up", "k":
+		case "up":
 			if m.state == stateGridDetail {
 				if m.gridDetailIdx > 0 {
 					m.gridDetailIdx--
@@ -1492,7 +1492,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-		case "down", "j":
+		case "down":
 			if m.state == stateGridDetail && m.gridDetailPanel != nil {
 				maxIdx := 1
 				if m.gridDetailPanel.hasSession {
