@@ -603,7 +603,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.buildGridPanels()
-			if wasInAvailable {
+			if prevName == "" {
+				m.gridIndex = 0
+				m.gridFilter = ""
+				m.gridFiltering = false
+				m.gridScrollOffset = 0
+				m.gridInAvailable = false
+				m.gridAvailIdx = 0
+				if len(m.gridPanels) == 0 && len(m.getFilteredAvailable()) > 0 {
+					m.gridInAvailable = true
+				}
+			} else if wasInAvailable {
 				filteredAvail := m.getFilteredAvailable()
 				m.gridAvailIdx = 0
 				for i, p := range filteredAvail {
