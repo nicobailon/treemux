@@ -3237,23 +3237,55 @@ func (m *model) renderGlobalPreview(wt scanner.RepoWorktree) string {
 		maxW = 20
 	}
 
-	title := sectionStyle.Render(iconPath + " " + wt.RepoName)
+	title := sectionStyle.Render(iconPath + " " + wt.RepoName + "/" + wt.Worktree.Name)
 	
 	pathDisplay := wt.Worktree.Path
 	if len(pathDisplay) > maxW {
 		pathDisplay = "..." + pathDisplay[len(pathDisplay)-maxW+3:]
 	}
 
-	infoLines := []string{
-		m.kvLine("Worktree", textStyle.Render(wt.Worktree.Name)),
+	hasSession := m.tmux.HasSession(wt.Worktree.Name)
+	
+	statusLines := []string{
 		m.kvLine("Branch", textStyle.Render(wt.Worktree.Branch)),
 		m.kvLine("Path", subTextStyle.Render(pathDisplay)),
 	}
 
-	infoCard := m.renderCard(iconBranch+" Details", strings.Join(infoLines, "\n"))
-	hint := dimStyle.Render("enter") + " " + subTextStyle.Render("jump to worktree")
+	if hasSession {
+		statusLines = append(statusLines, m.kvLine("Session", successStyle.Render("● active")))
+		if info, err := m.tmux.SessionInfo(wt.Worktree.Name); err == nil && info != nil {
+			sessionInfo := fmt.Sprintf("%d windows, %d panes", info.Windows, info.Panes)
+			statusLines = append(statusLines, m.kvLine("", textStyle.Render(sessionInfo)))
+		}
+	} else {
+		statusLines = append(statusLines, m.kvLine("Session", dimStyle.Render("○ inactive")))
+	}
 
-	return strings.Join([]string{title, "", infoCard, "", hint}, "\n")
+	statusCard := m.renderCard(iconBranch+" Worktree", strings.Join(statusLines, "\n"))
+
+	workflowTitle := "Workflow"
+	var workflowLines []string
+	if hasSession {
+		workflowLines = []string{
+			textStyle.Render("1. Jump to tmux session"),
+			textStyle.Render("2. Continue working"),
+		}
+	} else {
+		workflowLines = []string{
+			textStyle.Render("1. Start tmux session"),
+			textStyle.Render("2. Begin working"),
+		}
+	}
+	workflowCard := m.renderCard(iconSession+" "+workflowTitle, strings.Join(workflowLines, "\n"))
+
+	var hint string
+	if hasSession {
+		hint = dimStyle.Render("enter") + " " + subTextStyle.Render("jump to session")
+	} else {
+		hint = dimStyle.Render("enter") + " " + subTextStyle.Render("start session")
+	}
+
+	return strings.Join([]string{title, "", statusCard, "", workflowCard, "", hint}, "\n")
 }
 
 func (m *model) truncatePath(path string, maxLen int) string {
