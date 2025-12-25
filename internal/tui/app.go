@@ -1211,6 +1211,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.input.SetValue("")
 					return m, m.input.Focus()
 				case kindGridView:
+					if !m.globalMode {
+						m.globalMode = true
+						m.loading = true
+						m.state = stateGridView
+						return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+					}
 					m.buildGridPanels()
 					if len(m.gridPanels) == 0 && len(m.getFilteredAvailable()) == 0 {
 						m.toast = &toast{message: "No sessions or worktrees", kind: toastWarning, expiresAt: time.Now().Add(toastDuration)}
@@ -1383,6 +1389,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "ctrl+g":
 			if m.state == stateMain {
+				if !m.globalMode {
+					m.globalMode = true
+					m.loading = true
+					m.state = stateGridView
+					return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+				}
 				m.buildGridPanels()
 				if len(m.gridPanels) == 0 && len(m.getFilteredAvailable()) == 0 {
 					m.toast = &toast{message: "No sessions or worktrees", kind: toastWarning, expiresAt: time.Now().Add(toastDuration)}
