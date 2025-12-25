@@ -576,7 +576,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.globalWorktrees = msg.worktrees
 		m.orphans = msg.orphans
-		items := buildGlobalItems(m.globalWorktrees, m.orphans)
+		items := buildGlobalItems(m.globalWorktrees, m.orphans, m.tmux)
 		m.list.SetItems(items)
 		if m.selectAfterLoad != "" {
 			for i, item := range items {
@@ -1044,6 +1044,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.paneSession = ""
 			
 			return m, tea.Batch(cmds...)
+		case "pgdown", "ctrl+f":
+			for i := 0; i < 10; i++ {
+				m.list, _ = m.list.Update(tea.KeyMsg{Type: tea.KeyDown})
+			}
+			m.skipNonSelectable(1)
+			m.paneContent = ""
+			m.paneSession = ""
+			return m, nil
+		case "pgup", "ctrl+b":
+			for i := 0; i < 10; i++ {
+				m.list, _ = m.list.Update(tea.KeyMsg{Type: tea.KeyUp})
+			}
+			m.skipNonSelectable(-1)
+			m.paneContent = ""
+			m.paneSession = ""
+			return m, nil
 		}
 	}
 
@@ -1642,6 +1658,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
+					}
+				}
+				return m, nil
+			}
+		case "pgdown", "ctrl+f":
+			if m.state == stateGridView {
+				for i := 0; i < 3; i++ {
+					if m.gridInAvailable {
+						if m.gridAvailIdx+m.gridCols < len(m.getFilteredAvailable()) {
+							m.gridAvailIdx += m.gridCols
+						}
+					} else if m.gridIndex >= 0 {
+						filteredLen := len(m.getFilteredGridPanels())
+						if m.gridIndex+m.gridCols < filteredLen {
+							m.gridIndex += m.gridCols
+						} else if len(m.getFilteredAvailable()) > 0 {
+							m.gridInAvailable = true
+							m.gridAvailIdx = 0
+						}
+					}
+				}
+				return m, nil
+			}
+		case "pgup", "ctrl+b":
+			if m.state == stateGridView {
+				for i := 0; i < 3; i++ {
+					if m.gridInAvailable {
+						if m.gridAvailIdx >= m.gridCols {
+							m.gridAvailIdx -= m.gridCols
+						} else {
+							filteredLen := len(m.getFilteredGridPanels())
+							if filteredLen > 0 {
+								m.gridInAvailable = false
+								m.gridIndex = filteredLen - 1
+							}
+						}
+					} else if m.gridIndex >= m.gridCols {
+						m.gridIndex -= m.gridCols
 					}
 				}
 				return m, nil
@@ -2348,7 +2402,7 @@ func buildItems(states []workspace.WorktreeState, orphans []string, recentEntrie
 	return items
 }
 
-func buildGlobalItems(worktrees []scanner.RepoWorktree, orphans []string) []list.Item {
+func buildGlobalItems(worktrees []scanner.RepoWorktree, orphans []string, tmux *tmux.Tmux) []list.Item {
 	items := []list.Item{}
 	items = append(items, listItem{
 		title: "+ New Worktree",
@@ -2363,9 +2417,33 @@ func buildGlobalItems(worktrees []scanner.RepoWorktree, orphans []string) []list
 		})
 	}
 
-	if len(worktrees) > 0 {
-		items = append(items, listItem{title: "WORKTREES", kind: kindHeader})
-		for _, wt := range worktrees {
+	var withSession, withoutSession []scanner.RepoWorktree
+	for _, wt := range worktrees {
+		if tmux.HasSession(wt.Worktree.Name) {
+			withSession = append(withSession, wt)
+		} else {
+			withoutSession = append(withoutSession, wt)
+		}
+	}
+
+	if len(withSession) > 0 {
+		items = append(items, listItem{title: "SESSIONS", kind: kindHeader})
+		for _, wt := range withSession {
+			items = append(items, listItem{
+				title: wt.RepoName + "/" + wt.Worktree.Name,
+				desc:  wt.Worktree.Branch,
+				kind:  kindGlobal,
+				data:  wt,
+			})
+		}
+	}
+
+	if len(withoutSession) > 0 {
+		if len(withSession) > 0 {
+			items = append(items, listItem{kind: kindSeparator})
+		}
+		items = append(items, listItem{title: "AVAILABLE WORKTREES", kind: kindHeader})
+		for _, wt := range withoutSession {
 			items = append(items, listItem{
 				title: wt.RepoName + "/" + wt.Worktree.Name,
 				desc:  wt.Worktree.Branch,
