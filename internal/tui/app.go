@@ -2351,39 +2351,37 @@ func buildItems(states []workspace.WorktreeState, orphans []string, recentEntrie
 func buildGlobalItems(worktrees []scanner.RepoWorktree, orphans []string) []list.Item {
 	items := []list.Item{}
 	items = append(items, listItem{
-		title: "+ Create new worktree ...",
+		title: "+ New Worktree",
+		desc:  "Create worktree and session",
 		kind:  kindCreate,
 	})
 	if len(orphans) > 0 || len(worktrees) > 0 {
 		items = append(items, listItem{
 			title: "Grid View",
+			desc:  "View all sessions",
 			kind:  kindGridView,
 		})
 	}
 
-	currentRepo := ""
-	for _, wt := range worktrees {
-		if wt.RepoName != currentRepo {
-			if currentRepo != "" {
-				items = append(items, listItem{kind: kindSeparator})
-			}
-			items = append(items, listItem{title: wt.RepoName, kind: kindRepoHeader})
-			currentRepo = wt.RepoName
+	if len(worktrees) > 0 {
+		items = append(items, listItem{title: "WORKTREES", kind: kindHeader})
+		for _, wt := range worktrees {
+			items = append(items, listItem{
+				title: wt.RepoName + "/" + wt.Worktree.Name,
+				desc:  wt.Worktree.Branch,
+				kind:  kindGlobal,
+				data:  wt,
+			})
 		}
-		items = append(items, listItem{
-			title: wt.Worktree.Name,
-			desc:  wt.Worktree.Branch,
-			kind:  kindGlobal,
-			data:  wt,
-		})
 	}
 
 	if len(orphans) > 0 {
 		items = append(items, listItem{kind: kindSeparator})
-		items = append(items, listItem{title: "ORPHANED SESSIONS", kind: kindHeader})
+		items = append(items, listItem{title: "ORPHANED SESSIONS (no worktree)", kind: kindHeader})
 		for _, o := range orphans {
 			items = append(items, listItem{
 				title: o,
+				desc:  "orphaned session",
 				kind:  kindOrphan,
 				data:  o,
 			})
