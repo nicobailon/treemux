@@ -1810,43 +1810,45 @@ func (m *model) getFilteredGridPanels() []gridPanel {
 	if m.gridFilter == "" {
 		return m.gridPanels
 	}
-	cacheKey := m.gridFilter + ":panels"
-	if m.gridFilterCacheKey == cacheKey && m.gridFilteredCache != nil {
+	if m.gridFilterCacheKey == m.gridFilter && m.gridFilteredCache != nil {
 		return m.gridFilteredCache
 	}
-	filtered := make([]gridPanel, 0, len(m.gridPanels))
-	filterLower := strings.ToLower(m.gridFilter)
-	for _, p := range m.gridPanels {
-		if strings.Contains(strings.ToLower(p.name), filterLower) ||
-			strings.Contains(strings.ToLower(p.branch), filterLower) ||
-			strings.Contains(strings.ToLower(p.sessionName), filterLower) {
-			filtered = append(filtered, p)
-		}
-	}
-	m.gridFilteredCache = filtered
-	m.gridFilterCacheKey = cacheKey
-	return filtered
+	m.rebuildFilterCaches()
+	return m.gridFilteredCache
 }
 
 func (m *model) getFilteredAvailable() []gridPanel {
 	if m.gridFilter == "" {
 		return m.gridAvailable
 	}
-	cacheKey := m.gridFilter + ":avail"
-	if m.gridFilterCacheKey == cacheKey && m.gridAvailCache != nil {
+	if m.gridFilterCacheKey == m.gridFilter && m.gridAvailCache != nil {
 		return m.gridAvailCache
 	}
-	filtered := make([]gridPanel, 0, len(m.gridAvailable))
+	m.rebuildFilterCaches()
+	return m.gridAvailCache
+}
+
+func (m *model) rebuildFilterCaches() {
 	filterLower := strings.ToLower(m.gridFilter)
+	
+	m.gridFilteredCache = make([]gridPanel, 0, len(m.gridPanels))
+	for _, p := range m.gridPanels {
+		if strings.Contains(strings.ToLower(p.name), filterLower) ||
+			strings.Contains(strings.ToLower(p.branch), filterLower) ||
+			strings.Contains(strings.ToLower(p.sessionName), filterLower) {
+			m.gridFilteredCache = append(m.gridFilteredCache, p)
+		}
+	}
+	
+	m.gridAvailCache = make([]gridPanel, 0, len(m.gridAvailable))
 	for _, p := range m.gridAvailable {
 		if strings.Contains(strings.ToLower(p.name), filterLower) ||
 			strings.Contains(strings.ToLower(p.branch), filterLower) {
-			filtered = append(filtered, p)
+			m.gridAvailCache = append(m.gridAvailCache, p)
 		}
 	}
-	m.gridAvailCache = filtered
-	m.gridFilterCacheKey = cacheKey
-	return filtered
+	
+	m.gridFilterCacheKey = m.gridFilter
 }
 
 func (m *model) invalidateFilterCache() {
