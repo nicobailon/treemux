@@ -177,20 +177,23 @@ type model struct {
 	availableRepos   []repoInfo
 	refreshInterval  time.Duration
 	refreshInFlight  int
-	paneContent      string
-	paneSession      string
-	gridIndex        int
-	gridCols         int
-	gridPanels       []gridPanel
-	gridAvailable    []gridPanel
-	gridFilter       string
-	gridFiltering    bool
-	gridInAvailable  bool
-	gridAvailIdx     int
-	gridViewport     viewport.Model
-	gridScrollOffset int
-	gridDetailPanel  *gridPanel
-	gridDetailIdx    int
+	paneContent        string
+	paneSession        string
+	gridIndex          int
+	gridCols           int
+	gridPanels         []gridPanel
+	gridAvailable      []gridPanel
+	gridFilter         string
+	gridFiltering      bool
+	gridInAvailable    bool
+	gridAvailIdx       int
+	gridViewport       viewport.Model
+	gridScrollOffset   int
+	gridDetailPanel    *gridPanel
+	gridDetailIdx      int
+	gridFilteredCache  []gridPanel
+	gridAvailCache     []gridPanel
+	gridFilterCacheKey string
 }
 
 type gridPanel struct {
@@ -1807,7 +1810,11 @@ func (m *model) getFilteredGridPanels() []gridPanel {
 	if m.gridFilter == "" {
 		return m.gridPanels
 	}
-	filtered := []gridPanel{}
+	cacheKey := m.gridFilter + ":panels"
+	if m.gridFilterCacheKey == cacheKey && m.gridFilteredCache != nil {
+		return m.gridFilteredCache
+	}
+	filtered := make([]gridPanel, 0, len(m.gridPanels))
 	filterLower := strings.ToLower(m.gridFilter)
 	for _, p := range m.gridPanels {
 		if strings.Contains(strings.ToLower(p.name), filterLower) ||
@@ -1816,6 +1823,8 @@ func (m *model) getFilteredGridPanels() []gridPanel {
 			filtered = append(filtered, p)
 		}
 	}
+	m.gridFilteredCache = filtered
+	m.gridFilterCacheKey = cacheKey
 	return filtered
 }
 
@@ -1823,7 +1832,11 @@ func (m *model) getFilteredAvailable() []gridPanel {
 	if m.gridFilter == "" {
 		return m.gridAvailable
 	}
-	filtered := []gridPanel{}
+	cacheKey := m.gridFilter + ":avail"
+	if m.gridFilterCacheKey == cacheKey && m.gridAvailCache != nil {
+		return m.gridAvailCache
+	}
+	filtered := make([]gridPanel, 0, len(m.gridAvailable))
 	filterLower := strings.ToLower(m.gridFilter)
 	for _, p := range m.gridAvailable {
 		if strings.Contains(strings.ToLower(p.name), filterLower) ||
@@ -1831,7 +1844,15 @@ func (m *model) getFilteredAvailable() []gridPanel {
 			filtered = append(filtered, p)
 		}
 	}
+	m.gridAvailCache = filtered
+	m.gridFilterCacheKey = cacheKey
 	return filtered
+}
+
+func (m *model) invalidateFilterCache() {
+	m.gridFilterCacheKey = ""
+	m.gridFilteredCache = nil
+	m.gridAvailCache = nil
 }
 
 func (m *model) updateGridScroll() {
@@ -1922,6 +1943,7 @@ func (m *model) updateGridScroll() {
 func (m *model) buildGridPanels() {
 	m.gridPanels = []gridPanel{}
 	m.gridAvailable = []gridPanel{}
+	m.invalidateFilterCache()
 	
 	if m.globalMode {
 		for _, wt := range m.globalWorktrees {
@@ -2482,7 +2504,7 @@ func reorderCurrentFirst(states []workspace.WorktreeState, currentPath string) [
 }
 
 func (m *model) renderGridView() string {
-	if len(m.gridPanels) == 0 && len(m.getFilteredAvailable()) == 0 {
+	if len(m.gridPanels) == 0 && len(m.gridAvailable) == 0 {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
 			dimStyle.Render("No sessions or worktrees"))
 	}
@@ -2523,8 +2545,9 @@ func (m *model) renderGridView() string {
 	header := lipgloss.NewStyle().Padding(1, 2).Render(title)
 
 	filteredPanels := m.getFilteredGridPanels()
+	filteredAvailable := m.getFilteredAvailable()
 
-	if len(filteredPanels) == 0 && len(m.getFilteredAvailable()) == 0 {
+	if len(filteredPanels) == 0 && len(filteredAvailable) == 0 {
 		noResults := lipgloss.NewStyle().Foreground(dimColor).Render("No matching sessions")
 		return lipgloss.JoinVertical(lipgloss.Left, header, "\n"+noResults)
 	}
@@ -2694,7 +2717,6 @@ func (m *model) renderGridView() string {
 	if len(filteredPanels) == 0 && m.gridFiltering {
 		gridSections = append(gridSections, lipgloss.NewStyle().Foreground(dimColor).Render("No matching sessions"))
 	}
-	filteredAvailable := m.getFilteredAvailable()
 	if len(filteredAvailable) > 0 {
 		gridSections = append(gridSections, renderSectionHeader("AVAILABLE WORKTREES"))
 
