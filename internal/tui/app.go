@@ -1846,8 +1846,6 @@ func (m *model) updateGridScroll() {
 func (m *model) buildGridPanels() {
 	m.gridPanels = []gridPanel{}
 	m.gridAvailable = []gridPanel{}
-	m.gridInAvailable = false
-	m.gridAvailIdx = 0
 	
 	if m.globalMode {
 		for _, wt := range m.globalWorktrees {
