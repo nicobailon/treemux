@@ -194,6 +194,10 @@ type model struct {
 	gridFilteredCache  []gridPanel
 	gridAvailCache     []gridPanel
 	gridFilterCacheKey string
+	gridSessionPanels  []gridPanel
+	gridRecentPanels   []gridPanel
+	gridOrphanPanels   []gridPanel
+	gridCategoryCacheKey string
 }
 
 type gridPanel struct {
@@ -1318,6 +1322,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				filteredLen := len(m.getFilteredGridPanels())
 				if m.gridIndex == -1 {
 					m.gridIndex = -2
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridIndex == -2 {
@@ -1327,6 +1332,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridInAvailable {
@@ -1346,6 +1352,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridIndex = -1
 					}
 				}
+				m.updateGridScroll()
 				return m, nil
 			}
 			if sel, ok := m.list.SelectedItem().(listItem); ok && sel.kind == kindWorktree {
@@ -1367,10 +1374,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						m.gridIndex = -2
 					}
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridIndex == -2 {
 					m.gridIndex = -1
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridInAvailable {
@@ -1383,15 +1392,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridInAvailable = false
 						m.gridIndex = -2
 					}
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridIndex == 0 {
 					m.gridIndex = -2
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridIndex > 0 {
 					m.gridIndex--
 				}
+				m.updateGridScroll()
 				return m, nil
 			}
 		case "ctrl+d":
@@ -1450,6 +1462,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if m.gridIndex == -2 {
 					m.gridIndex = -1
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridInAvailable {
@@ -1465,21 +1478,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.gridIndex = -2
 						}
 					}
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridIndex == 0 {
 					m.gridIndex = -2
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridIndex > 0 {
 					m.gridIndex--
 				}
+				m.updateGridScroll()
 				return m, nil
 			}
 		case "right":
 			if m.state == stateGridView {
 				if m.gridIndex == -1 {
 					m.gridIndex = -2
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridIndex == -2 {
@@ -1490,6 +1507,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridInAvailable {
@@ -1505,6 +1523,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridAvailIdx = 0
 					}
 				}
+				m.updateGridScroll()
 				return m, nil
 			}
 		case "up":
@@ -1536,6 +1555,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					filteredPanels := m.getFilteredGridPanels()
 					if m.gridIndex >= len(filteredPanels) || len(filteredPanels) == 0 {
 						m.gridIndex = -2
+						m.updateGridScroll()
 						return m, nil
 					}
 					var sessionCount, recentCount int
@@ -1574,6 +1594,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
+				m.updateGridScroll()
 				return m, nil
 			}
 		case "down":
@@ -1600,10 +1621,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.gridAvailIdx = nextRowStart
 						}
 					}
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridIndex == -1 {
 					m.gridIndex = -2
+					m.updateGridScroll()
 					return m, nil
 				}
 				if m.gridIndex == -2 {
@@ -1614,6 +1637,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
+					m.updateGridScroll()
 					return m, nil
 				}
 				filteredPanels := m.getFilteredGridPanels()
@@ -1663,6 +1687,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridAvailIdx = 0
 					}
 				}
+				m.updateGridScroll()
 				return m, nil
 			}
 		case "pgdown", "ctrl+f":
@@ -1682,6 +1707,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
+				m.updateGridScroll()
 				return m, nil
 			}
 		case "pgup", "ctrl+b":
@@ -1701,6 +1727,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridIndex -= m.gridCols
 					}
 				}
+				m.updateGridScroll()
 				return m, nil
 			}
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
@@ -1855,6 +1882,29 @@ func (m *model) invalidateFilterCache() {
 	m.gridFilterCacheKey = ""
 	m.gridFilteredCache = nil
 	m.gridAvailCache = nil
+	m.gridCategoryCacheKey = ""
+}
+
+func (m *model) getCategorizedPanels() (sessions, recents, orphans []gridPanel) {
+	filtered := m.getFilteredGridPanels()
+	cacheKey := m.gridFilter + "|" + fmt.Sprintf("%d", len(filtered))
+	if m.gridCategoryCacheKey == cacheKey {
+		return m.gridSessionPanels, m.gridRecentPanels, m.gridOrphanPanels
+	}
+	m.gridSessionPanels = make([]gridPanel, 0)
+	m.gridRecentPanels = make([]gridPanel, 0)
+	m.gridOrphanPanels = make([]gridPanel, 0)
+	for _, p := range filtered {
+		if p.isOrphan {
+			m.gridOrphanPanels = append(m.gridOrphanPanels, p)
+		} else if p.isRecent {
+			m.gridRecentPanels = append(m.gridRecentPanels, p)
+		} else {
+			m.gridSessionPanels = append(m.gridSessionPanels, p)
+		}
+	}
+	m.gridCategoryCacheKey = cacheKey
+	return m.gridSessionPanels, m.gridRecentPanels, m.gridOrphanPanels
 }
 
 func (m *model) updateGridScroll() {
@@ -1871,17 +1921,8 @@ func (m *model) updateGridScroll() {
 		m.gridCols = 4
 	}
 
-	filteredPanels := m.getFilteredGridPanels()
-	var sessionPanels, recentPanels, orphanPanels []gridPanel
-	for _, p := range filteredPanels {
-		if p.isOrphan {
-			orphanPanels = append(orphanPanels, p)
-		} else if p.isRecent {
-			recentPanels = append(recentPanels, p)
-		} else {
-			sessionPanels = append(sessionPanels, p)
-		}
-	}
+	sessionPanels, recentPanels, orphanPanels := m.getCategorizedPanels()
+	filteredLen := len(sessionPanels) + len(recentPanels) + len(orphanPanels)
 
 	headerHeight := 3
 	footerHeight := 3
@@ -1907,7 +1948,7 @@ func (m *model) updateGridScroll() {
 		orphansLines = sectionHeaderLines + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
 	}
 	noMatchLines := 0
-	if len(filteredPanels) == 0 && m.gridFiltering {
+	if filteredLen == 0 && m.gridFiltering {
 		noMatchLines = 1
 	}
 
@@ -2745,69 +2786,17 @@ func (m *model) renderGridView() string {
 		availableHeight = 1
 	}
 
-	panelLines := 6
-	actionItemsLines := 5
-	sectionHeaderLines := 3
-
-	sessionsLines := 0
-	if len(sessionPanels) > 0 {
-		sessionsLines = sectionHeaderLines + ((len(sessionPanels)+m.gridCols-1)/m.gridCols)*panelLines
-	}
-	recentLines := 0
-	if len(recentPanels) > 0 {
-		recentLines = sectionHeaderLines + ((len(recentPanels)+m.gridCols-1)/m.gridCols)*panelLines
-	}
-	orphansLines := 0
-	if len(orphanPanels) > 0 {
-		orphansLines = sectionHeaderLines + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
-	}
-	noMatchLines := 0
-	if len(filteredPanels) == 0 && m.gridFiltering {
-		noMatchLines = 1
-	}
-
-	var selectedLine int
-	if m.gridInAvailable {
-		availRowIdx := m.gridAvailIdx / m.gridCols
-		selectedLine = actionItemsLines + sessionsLines + recentLines + orphansLines + noMatchLines + sectionHeaderLines + availRowIdx*panelLines
-	} else if m.gridIndex < 0 {
-		selectedLine = 0
-	} else {
-		if m.gridIndex < len(sessionPanels) {
-			rowIdx := m.gridIndex / m.gridCols
-			selectedLine = actionItemsLines + sectionHeaderLines + rowIdx*panelLines
-		} else if m.gridIndex < len(sessionPanels)+len(recentPanels) {
-			recentLocalIdx := m.gridIndex - len(sessionPanels)
-			rowIdx := recentLocalIdx / m.gridCols
-			selectedLine = actionItemsLines + sessionsLines + sectionHeaderLines + rowIdx*panelLines
-		} else {
-			orphanLocalIdx := m.gridIndex - len(sessionPanels) - len(recentPanels)
-			rowIdx := orphanLocalIdx / m.gridCols
-			selectedLine = actionItemsLines + sessionsLines + recentLines + sectionHeaderLines + rowIdx*panelLines
-		}
-	}
-
-	scrollOffset := m.gridScrollOffset
-	if selectedLine < scrollOffset {
-		scrollOffset = selectedLine
-	} else if selectedLine+panelLines > scrollOffset+availableHeight {
-		scrollOffset = selectedLine + panelLines - availableHeight
-	}
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
-
 	gridLines := strings.Split(grid, "\n")
-	startLine := scrollOffset
+	startLine := m.gridScrollOffset
 	if startLine < 0 {
 		startLine = 0
+	}
+	if startLine > len(gridLines) {
+		startLine = len(gridLines)
 	}
 	endLine := startLine + availableHeight
 	if endLine > len(gridLines) {
 		endLine = len(gridLines)
-	}
-	if startLine > len(gridLines) {
-		startLine = len(gridLines)
 	}
 	visibleGrid := strings.Join(gridLines[startLine:endLine], "\n")
 	body := lipgloss.NewStyle().Height(availableHeight).MarginLeft(2).Render(visibleGrid)
