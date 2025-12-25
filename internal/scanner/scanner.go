@@ -43,7 +43,7 @@ func ScanForRepos(searchPaths []string) []string {
 			gitPath := filepath.Join(dirPath, ".git")
 
 			if info, err := os.Stat(gitPath); err == nil {
-				if info.IsDir() || info.Mode().IsRegular() {
+				if info.IsDir() {
 					repoRoot := findRepoRoot(dirPath)
 					if repoRoot != "" && !seen[repoRoot] {
 						repos = append(repos, repoRoot)

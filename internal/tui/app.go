@@ -196,7 +196,6 @@ type model struct {
 	gridFilterCacheKey string
 	gridSessionPanels  []gridPanel
 	gridRecentPanels   []gridPanel
-	gridOrphanPanels   []gridPanel
 	gridCategoryCacheKey string
 }
 
@@ -1541,7 +1540,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						filteredPanels := m.getFilteredGridPanels()
 						if len(filteredPanels) > 0 {
 							m.gridInAvailable = false
-							m.gridIndex = len(filteredPanels) - 1
+							col := m.gridAvailIdx % m.gridCols
+							lastRow := (len(filteredPanels) - 1) / m.gridCols
+							targetIdx := lastRow*m.gridCols + col
+							if targetIdx >= len(filteredPanels) {
+								targetIdx = len(filteredPanels) - 1
+							}
+							m.gridIndex = targetIdx
 						} else {
 							m.gridInAvailable = false
 							m.gridIndex = -2
@@ -1558,31 +1563,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.updateGridScroll()
 						return m, nil
 					}
-					var sessionCount, recentCount int
+					var sessionSectionCount int
 					for _, p := range filteredPanels {
-						if !p.isOrphan && !p.isRecent {
-							sessionCount++
-						} else if p.isRecent {
-							recentCount++
+						if !p.isRecent && (p.hasSession || p.isOrphan) {
+							sessionSectionCount++
 						}
 					}
 					currentPanel := filteredPanels[m.gridIndex]
-					if currentPanel.isOrphan {
-						firstOrphanIdx := sessionCount + recentCount
-						localIdx := m.gridIndex - firstOrphanIdx
+					if currentPanel.isRecent {
+						localIdx := m.gridIndex - sessionSectionCount
+						col := localIdx % m.gridCols
 						if localIdx >= m.gridCols {
 							m.gridIndex -= m.gridCols
-						} else if firstOrphanIdx > 0 {
-							m.gridIndex = firstOrphanIdx - 1
-						} else {
-							m.gridIndex = -2
-						}
-					} else if currentPanel.isRecent {
-						localIdx := m.gridIndex - sessionCount
-						if localIdx >= m.gridCols {
-							m.gridIndex -= m.gridCols
-						} else if sessionCount > 0 {
-							m.gridIndex = sessionCount - 1
+						} else if sessionSectionCount > 0 {
+							lastSessionRow := (sessionSectionCount - 1) / m.gridCols
+							targetIdx := lastSessionRow*m.gridCols + col
+							if targetIdx >= sessionSectionCount {
+								targetIdx = sessionSectionCount - 1
+							}
+							m.gridIndex = targetIdx
 						} else {
 							m.gridIndex = -2
 						}
@@ -1644,47 +1643,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.gridIndex >= len(filteredPanels) || len(filteredPanels) == 0 {
 					return m, nil
 				}
-				var sessionCount, recentCount, orphanCount int
+				var sessionSectionCount, recentCount int
 				for _, p := range filteredPanels {
-					if !p.isOrphan && !p.isRecent {
-						sessionCount++
+					if !p.isRecent && (p.hasSession || p.isOrphan) {
+						sessionSectionCount++
 					} else if p.isRecent {
 						recentCount++
-					} else {
-						orphanCount++
 					}
 				}
 				currentPanel := filteredPanels[m.gridIndex]
-				if !currentPanel.isOrphan && !currentPanel.isRecent {
+				if !currentPanel.isRecent {
 					localIdx := m.gridIndex
-					if localIdx+m.gridCols < sessionCount {
+					col := localIdx % m.gridCols
+					if localIdx+m.gridCols < sessionSectionCount {
 						m.gridIndex += m.gridCols
 					} else if recentCount > 0 {
-						m.gridIndex = sessionCount
-					} else if orphanCount > 0 {
-						m.gridIndex = sessionCount + recentCount
+						targetIdx := sessionSectionCount + col
+						if targetIdx >= sessionSectionCount+recentCount {
+							targetIdx = sessionSectionCount + recentCount - 1
+						}
+						m.gridIndex = targetIdx
 					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
-						m.gridAvailIdx = 0
-					}
-				} else if currentPanel.isRecent {
-					localIdx := m.gridIndex - sessionCount
-					if localIdx+m.gridCols < recentCount {
-						m.gridIndex += m.gridCols
-					} else if orphanCount > 0 {
-						m.gridIndex = sessionCount + recentCount
-					} else if len(m.getFilteredAvailable()) > 0 {
-						m.gridInAvailable = true
-						m.gridAvailIdx = 0
+						m.gridAvailIdx = col
+						if m.gridAvailIdx >= len(m.getFilteredAvailable()) {
+							m.gridAvailIdx = len(m.getFilteredAvailable()) - 1
+						}
 					}
 				} else {
-					firstOrphanIdx := sessionCount + recentCount
-					localIdx := m.gridIndex - firstOrphanIdx
-					if localIdx+m.gridCols < orphanCount {
+					localIdx := m.gridIndex - sessionSectionCount
+					col := localIdx % m.gridCols
+					if localIdx+m.gridCols < recentCount {
 						m.gridIndex += m.gridCols
 					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
-						m.gridAvailIdx = 0
+						m.gridAvailIdx = col
+						if m.gridAvailIdx >= len(m.getFilteredAvailable()) {
+							m.gridAvailIdx = len(m.getFilteredAvailable()) - 1
+						}
 					}
 				}
 				m.updateGridScroll()
@@ -1885,26 +1881,23 @@ func (m *model) invalidateFilterCache() {
 	m.gridCategoryCacheKey = ""
 }
 
-func (m *model) getCategorizedPanels() (sessions, recents, orphans []gridPanel) {
+func (m *model) getCategorizedPanels() (sessions, recents []gridPanel) {
 	filtered := m.getFilteredGridPanels()
 	cacheKey := m.gridFilter + "|" + fmt.Sprintf("%d", len(filtered))
 	if m.gridCategoryCacheKey == cacheKey {
-		return m.gridSessionPanels, m.gridRecentPanels, m.gridOrphanPanels
+		return m.gridSessionPanels, m.gridRecentPanels
 	}
 	m.gridSessionPanels = make([]gridPanel, 0)
 	m.gridRecentPanels = make([]gridPanel, 0)
-	m.gridOrphanPanels = make([]gridPanel, 0)
 	for _, p := range filtered {
-		if p.isOrphan {
-			m.gridOrphanPanels = append(m.gridOrphanPanels, p)
-		} else if p.isRecent {
+		if p.isRecent {
 			m.gridRecentPanels = append(m.gridRecentPanels, p)
-		} else {
+		} else if p.hasSession || p.isOrphan {
 			m.gridSessionPanels = append(m.gridSessionPanels, p)
 		}
 	}
 	m.gridCategoryCacheKey = cacheKey
-	return m.gridSessionPanels, m.gridRecentPanels, m.gridOrphanPanels
+	return m.gridSessionPanels, m.gridRecentPanels
 }
 
 func (m *model) updateGridScroll() {
@@ -1921,8 +1914,8 @@ func (m *model) updateGridScroll() {
 		m.gridCols = 4
 	}
 
-	sessionPanels, recentPanels, orphanPanels := m.getCategorizedPanels()
-	filteredLen := len(sessionPanels) + len(recentPanels) + len(orphanPanels)
+	sessionPanels, recentPanels := m.getCategorizedPanels()
+	filteredLen := len(sessionPanels) + len(recentPanels)
 
 	headerHeight := 3
 	footerHeight := 3
@@ -1943,10 +1936,7 @@ func (m *model) updateGridScroll() {
 	if len(recentPanels) > 0 {
 		recentLines = sectionHeaderLines + ((len(recentPanels)+m.gridCols-1)/m.gridCols)*panelLines
 	}
-	orphansLines := 0
-	if len(orphanPanels) > 0 {
-		orphansLines = sectionHeaderLines + ((len(orphanPanels)+m.gridCols-1)/m.gridCols)*panelLines
-	}
+
 	noMatchLines := 0
 	if filteredLen == 0 && m.gridFiltering {
 		noMatchLines = 1
@@ -1955,7 +1945,7 @@ func (m *model) updateGridScroll() {
 	var selectedLine int
 	if m.gridInAvailable {
 		availRowIdx := m.gridAvailIdx / m.gridCols
-		selectedLine = actionItemsLines + sessionsLines + recentLines + orphansLines + noMatchLines + sectionHeaderLines + availRowIdx*panelLines
+		selectedLine = actionItemsLines + sessionsLines + recentLines + noMatchLines + sectionHeaderLines + availRowIdx*panelLines
 	} else if m.gridIndex < 0 {
 		selectedLine = 0
 	} else {
@@ -1966,10 +1956,6 @@ func (m *model) updateGridScroll() {
 			recentLocalIdx := m.gridIndex - len(sessionPanels)
 			rowIdx := recentLocalIdx / m.gridCols
 			selectedLine = actionItemsLines + sessionsLines + sectionHeaderLines + rowIdx*panelLines
-		} else {
-			orphanLocalIdx := m.gridIndex - len(sessionPanels) - len(recentPanels)
-			rowIdx := orphanLocalIdx / m.gridCols
-			selectedLine = actionItemsLines + sessionsLines + recentLines + sectionHeaderLines + rowIdx*panelLines
 		}
 	}
 
@@ -2049,6 +2035,23 @@ func (m *model) buildGridPanels() {
 		}
 	}
 
+	sortedOrphans := make([]string, len(m.orphans))
+	copy(sortedOrphans, m.orphans)
+	sort.Strings(sortedOrphans)
+	for _, o := range sortedOrphans {
+		panel := gridPanel{
+			name:        o,
+			sessionName: o,
+			hasSession:  true,
+			isOrphan:    true,
+		}
+		if info, err := m.tmux.SessionInfo(o); err == nil && info != nil {
+			panel.windows = info.Windows
+			panel.panes = info.Panes
+		}
+		m.gridPanels = append(m.gridPanels, panel)
+	}
+
 	if !m.globalMode {
 		for _, r := range m.recentEntries {
 			sessionName := r.SessionName
@@ -2070,23 +2073,6 @@ func (m *model) buildGridPanels() {
 			}
 			m.gridPanels = append(m.gridPanels, panel)
 		}
-	}
-
-	sortedOrphans := make([]string, len(m.orphans))
-	copy(sortedOrphans, m.orphans)
-	sort.Strings(sortedOrphans)
-	for _, o := range sortedOrphans {
-		panel := gridPanel{
-			name:        o,
-			sessionName: o,
-			hasSession:  true,
-			isOrphan:    true,
-		}
-		if info, err := m.tmux.SessionInfo(o); err == nil && info != nil {
-			panel.windows = info.Windows
-			panel.panes = info.Panes
-		}
-		m.gridPanels = append(m.gridPanels, panel)
 	}
 	
 	gridWidth := m.width - 4
@@ -2595,18 +2581,14 @@ func (m *model) renderGridView() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, "\n"+noResults)
 	}
 
-	var sessionPanels, recentPanels, orphanPanels []gridPanel
+	var sessionPanels, recentPanels []gridPanel
 	sessionIndices := make(map[int]int)
 	recentIndices := make(map[int]int)
-	orphanIndices := make(map[int]int)
 	for i, p := range filteredPanels {
-		if p.isOrphan {
-			orphanIndices[len(orphanPanels)] = i
-			orphanPanels = append(orphanPanels, p)
-		} else if p.isRecent {
+		if p.isRecent {
 			recentIndices[len(recentPanels)] = i
 			recentPanels = append(recentPanels, p)
-		} else {
+		} else if p.hasSession || p.isOrphan {
 			sessionIndices[len(sessionPanels)] = i
 			sessionPanels = append(sessionPanels, p)
 		}
@@ -2658,7 +2640,9 @@ func (m *model) renderGridView() string {
 			Render(titleContent)
 
 		line1 := ""
-		if panel.branch != "" {
+		if panel.isOrphan {
+			line1 = cachedInactiveStyle.Render("* orphaned")
+		} else if panel.branch != "" {
 			branchDisplay := panel.branch
 			maxBranchLen := innerWidth - 4
 			if len(branchDisplay) > maxBranchLen {
@@ -2747,15 +2731,11 @@ func (m *model) renderGridView() string {
 
 	if len(sessionPanels) > 0 {
 		gridSections = append(gridSections, renderSectionHeader("SESSIONS"))
-		gridSections = append(gridSections, renderPanelGrid(sessionPanels, sessionIndices, true))
+		gridSections = append(gridSections, renderPanelGrid(sessionPanels, sessionIndices, false))
 	}
 	if len(recentPanels) > 0 {
 		gridSections = append(gridSections, renderSectionHeader("RECENT"))
-		gridSections = append(gridSections, renderPanelGrid(recentPanels, recentIndices, true))
-	}
-	if len(orphanPanels) > 0 {
-		gridSections = append(gridSections, renderSectionHeader("ORPHANED SESSIONS"))
-		gridSections = append(gridSections, renderPanelGrid(orphanPanels, orphanIndices, true))
+		gridSections = append(gridSections, renderPanelGrid(recentPanels, recentIndices, false))
 	}
 	if len(filteredPanels) == 0 && m.gridFiltering {
 		gridSections = append(gridSections, lipgloss.NewStyle().Foreground(dimColor).Render("No matching sessions"))
