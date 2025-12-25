@@ -527,12 +527,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prevAvailIdx := m.gridAvailIdx
 			prevGridIdx := m.gridIndex
 			m.buildGridPanels()
-			if wasInAvailable && len(m.gridAvailable) > 0 {
+			if wasInAvailable && len(m.getFilteredAvailable()) > 0 {
 				m.gridInAvailable = true
-				if prevAvailIdx < len(m.gridAvailable) {
+				if prevAvailIdx < len(m.getFilteredAvailable()) {
 					m.gridAvailIdx = prevAvailIdx
 				} else {
-					m.gridAvailIdx = len(m.gridAvailable) - 1
+					m.gridAvailIdx = len(m.getFilteredAvailable()) - 1
 				}
 			} else if !wasInAvailable && prevGridIdx >= 0 {
 				filteredPanels := m.getFilteredGridPanels()
@@ -540,7 +540,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.gridIndex = prevGridIdx
 				} else if len(filteredPanels) > 0 {
 					m.gridIndex = len(filteredPanels) - 1
-				} else if len(m.gridAvailable) > 0 {
+				} else if len(m.getFilteredAvailable()) > 0 {
 					m.gridInAvailable = true
 					m.gridAvailIdx = 0
 				}
@@ -573,12 +573,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prevAvailIdx := m.gridAvailIdx
 			prevGridIdx := m.gridIndex
 			m.buildGridPanels()
-			if wasInAvailable && len(m.gridAvailable) > 0 {
+			if wasInAvailable && len(m.getFilteredAvailable()) > 0 {
 				m.gridInAvailable = true
-				if prevAvailIdx < len(m.gridAvailable) {
+				if prevAvailIdx < len(m.getFilteredAvailable()) {
 					m.gridAvailIdx = prevAvailIdx
 				} else {
-					m.gridAvailIdx = len(m.gridAvailable) - 1
+					m.gridAvailIdx = len(m.getFilteredAvailable()) - 1
 				}
 			} else if !wasInAvailable && prevGridIdx >= 0 {
 				filteredPanels := m.getFilteredGridPanels()
@@ -586,7 +586,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.gridIndex = prevGridIdx
 				} else if len(filteredPanels) > 0 {
 					m.gridIndex = len(filteredPanels) - 1
-				} else if len(m.gridAvailable) > 0 {
+				} else if len(m.getFilteredAvailable()) > 0 {
 					m.gridInAvailable = true
 					m.gridAvailIdx = 0
 				}
@@ -1086,9 +1086,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				var panel *gridPanel
-				if m.gridInAvailable && m.gridAvailIdx < len(m.gridAvailable) {
-					p := m.gridAvailable[m.gridAvailIdx]
-					panel = &p
+				if m.gridInAvailable {
+					filteredAvail := m.getFilteredAvailable()
+					if m.gridAvailIdx < len(filteredAvail) {
+						p := filteredAvail[m.gridAvailIdx]
+						panel = &p
+					}
 				} else {
 					filteredPanels := m.getFilteredGridPanels()
 					if m.gridIndex >= 0 && m.gridIndex < len(filteredPanels) {
@@ -1169,7 +1172,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.input.Focus()
 				case kindGridView:
 					m.buildGridPanels()
-					if len(m.gridPanels) == 0 && len(m.gridAvailable) == 0 {
+					if len(m.gridPanels) == 0 && len(m.getFilteredAvailable()) == 0 {
 						m.toast = &toast{message: "No sessions or worktrees", kind: toastWarning, expiresAt: time.Now().Add(toastDuration)}
 						return m, toastExpireCmd()
 					}
@@ -1178,7 +1181,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.gridFilter = ""
 					m.gridFiltering = false
 					m.gridScrollOffset = 0
-					if len(m.gridPanels) == 0 && len(m.gridAvailable) > 0 {
+					if len(m.gridPanels) == 0 && len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
@@ -1245,14 +1248,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.gridIndex == -2 {
 					if filteredLen > 0 {
 						m.gridIndex = 0
-					} else if len(m.gridAvailable) > 0 {
+					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
 					return m, nil
 				}
 				if m.gridInAvailable {
-					if m.gridAvailIdx < len(m.gridAvailable)-1 {
+					if m.gridAvailIdx < len(m.getFilteredAvailable())-1 {
 						m.gridAvailIdx++
 					} else {
 						m.gridInAvailable = false
@@ -1261,7 +1264,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					if m.gridIndex < filteredLen-1 {
 						m.gridIndex++
-					} else if len(m.gridAvailable) > 0 {
+					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					} else {
@@ -1281,9 +1284,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == stateGridView {
 				filteredLen := len(m.getFilteredGridPanels())
 				if m.gridIndex == -1 {
-					if len(m.gridAvailable) > 0 {
+					if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
-						m.gridAvailIdx = len(m.gridAvailable) - 1
+						m.gridAvailIdx = len(m.getFilteredAvailable()) - 1
 					} else if filteredLen > 0 {
 						m.gridIndex = filteredLen - 1
 					} else {
@@ -1341,7 +1344,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+g":
 			if m.state == stateMain {
 				m.buildGridPanels()
-				if len(m.gridPanels) == 0 && len(m.gridAvailable) == 0 {
+				if len(m.gridPanels) == 0 && len(m.getFilteredAvailable()) == 0 {
 					m.toast = &toast{message: "No sessions or worktrees", kind: toastWarning, expiresAt: time.Now().Add(toastDuration)}
 					return m, toastExpireCmd()
 				}
@@ -1350,7 +1353,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.gridFilter = ""
 				m.gridFiltering = false
 				m.gridScrollOffset = 0
-				if len(m.gridPanels) == 0 && len(m.gridAvailable) > 0 {
+				if len(m.gridPanels) == 0 && len(m.getFilteredAvailable()) > 0 {
 					m.gridInAvailable = true
 					m.gridAvailIdx = 0
 				}
@@ -1402,21 +1405,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					filteredLen := len(m.getFilteredGridPanels())
 					if filteredLen > 0 {
 						m.gridIndex = 0
-					} else if len(m.gridAvailable) > 0 {
+					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
 					return m, nil
 				}
 				if m.gridInAvailable {
-					if m.gridAvailIdx < len(m.gridAvailable)-1 {
+					if m.gridAvailIdx < len(m.getFilteredAvailable())-1 {
 						m.gridAvailIdx++
 					}
 				} else {
 					filteredLen := len(m.getFilteredGridPanels())
 					if m.gridIndex < filteredLen-1 {
 						m.gridIndex++
-					} else if len(m.gridAvailable) > 0 {
+					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
@@ -1508,11 +1511,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.state == stateGridView {
 				if m.gridInAvailable {
-					if m.gridAvailIdx+m.gridCols < len(m.gridAvailable) {
+					if m.gridAvailIdx+m.gridCols < len(m.getFilteredAvailable()) {
 						m.gridAvailIdx += m.gridCols
 					} else {
 						nextRowStart := ((m.gridAvailIdx / m.gridCols) + 1) * m.gridCols
-						if nextRowStart < len(m.gridAvailable) {
+						if nextRowStart < len(m.getFilteredAvailable()) {
 							m.gridAvailIdx = nextRowStart
 						}
 					}
@@ -1526,7 +1529,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					filteredPanels := m.getFilteredGridPanels()
 					if len(filteredPanels) > 0 {
 						m.gridIndex = 0
-					} else if len(m.gridAvailable) > 0 {
+					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
@@ -1555,7 +1558,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridIndex = sessionCount
 					} else if orphanCount > 0 {
 						m.gridIndex = sessionCount + recentCount
-					} else if len(m.gridAvailable) > 0 {
+					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
@@ -1565,7 +1568,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.gridIndex += m.gridCols
 					} else if orphanCount > 0 {
 						m.gridIndex = sessionCount + recentCount
-					} else if len(m.gridAvailable) > 0 {
+					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
@@ -1574,7 +1577,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					localIdx := m.gridIndex - firstOrphanIdx
 					if localIdx+m.gridCols < orphanCount {
 						m.gridIndex += m.gridCols
-					} else if len(m.gridAvailable) > 0 {
+					} else if len(m.getFilteredAvailable()) > 0 {
 						m.gridInAvailable = true
 						m.gridAvailIdx = 0
 					}
@@ -1644,6 +1647,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						(ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' {
 						m.gridFilter += strings.ToLower(key)
 						m.gridIndex = 0
+						m.gridInAvailable = false
+						m.gridAvailIdx = 0
 						return m, nil
 					}
 				}
@@ -1692,6 +1697,21 @@ func (m *model) getFilteredGridPanels() []gridPanel {
 		if strings.Contains(strings.ToLower(p.name), filterLower) ||
 			strings.Contains(strings.ToLower(p.branch), filterLower) ||
 			strings.Contains(strings.ToLower(p.sessionName), filterLower) {
+			filtered = append(filtered, p)
+		}
+	}
+	return filtered
+}
+
+func (m *model) getFilteredAvailable() []gridPanel {
+	if m.gridFilter == "" {
+		return m.gridAvailable
+	}
+	filtered := []gridPanel{}
+	filterLower := strings.ToLower(m.gridFilter)
+	for _, p := range m.gridAvailable {
+		if strings.Contains(strings.ToLower(p.name), filterLower) ||
+			strings.Contains(strings.ToLower(p.branch), filterLower) {
 			filtered = append(filtered, p)
 		}
 	}
@@ -2326,7 +2346,7 @@ func reorderCurrentFirst(states []workspace.WorktreeState, currentPath string) [
 }
 
 func (m *model) renderGridView() string {
-	if len(m.gridPanels) == 0 && len(m.gridAvailable) == 0 {
+	if len(m.gridPanels) == 0 && len(m.getFilteredAvailable()) == 0 {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
 			dimStyle.Render("No sessions or worktrees"))
 	}
@@ -2368,7 +2388,7 @@ func (m *model) renderGridView() string {
 
 	filteredPanels := m.getFilteredGridPanels()
 
-	if len(filteredPanels) == 0 && len(m.gridAvailable) == 0 {
+	if len(filteredPanels) == 0 && len(m.getFilteredAvailable()) == 0 {
 		noResults := lipgloss.NewStyle().Foreground(dimColor).Render("No matching sessions")
 		return lipgloss.JoinVertical(lipgloss.Left, header, "\n"+noResults)
 	}
@@ -2538,17 +2558,18 @@ func (m *model) renderGridView() string {
 	if len(filteredPanels) == 0 && m.gridFiltering {
 		gridSections = append(gridSections, lipgloss.NewStyle().Foreground(dimColor).Render("No matching sessions"))
 	}
-	if len(m.gridAvailable) > 0 {
+	filteredAvailable := m.getFilteredAvailable()
+	if len(filteredAvailable) > 0 {
 		gridSections = append(gridSections, renderSectionHeader("AVAILABLE WORKTREES"))
 
 		var availRows []string
 		var availRow []string
-		for i, panel := range m.gridAvailable {
+		for i, panel := range filteredAvailable {
 			isSelected := m.gridInAvailable && i == m.gridAvailIdx
 			renderedPanel := renderPanel(panel, i, isSelected, false)
 			availRow = append(availRow, renderedPanel)
 
-			if len(availRow) >= m.gridCols || i == len(m.gridAvailable)-1 {
+			if len(availRow) >= m.gridCols || i == len(filteredAvailable)-1 {
 				availRows = append(availRows, lipgloss.JoinHorizontal(lipgloss.Top, availRow...))
 				availRow = []string{}
 			}
