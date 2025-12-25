@@ -41,33 +41,42 @@ const (
 const defaultRefreshInterval = 3 * time.Second
 
 var (
-	cachedDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
-	cachedSuccessColor  = lipgloss.Color("#a6e3a1")
-	cachedTealColor     = lipgloss.Color("#94e2d5")
-	cachedBlueColor     = lipgloss.Color("#89b4fa")
-	cachedTextColor     = lipgloss.Color("#cdd6f4")
-	cachedMutedColor    = lipgloss.Color("#45475a")
-	cachedBorderColor   = lipgloss.Color("#313244")
-	cachedBgColor       = lipgloss.Color("#1e1e2e")
-	
-	cachedPanelBorder       = lipgloss.RoundedBorder()
-	cachedTrafficActive     = lipgloss.NewStyle().Foreground(cachedSuccessColor).Render("●●●")
-	cachedTrafficInactive   = lipgloss.NewStyle().Foreground(cachedMutedColor).Render("●●●")
-	cachedBranchStyle       = lipgloss.NewStyle().Foreground(cachedBlueColor)
-	cachedActiveStyle       = lipgloss.NewStyle().Foreground(cachedSuccessColor)
-	cachedInactiveStyle     = lipgloss.NewStyle().Foreground(cachedMutedColor)
-	cachedNameStyle         = lipgloss.NewStyle().Foreground(cachedTextColor)
-	cachedNameSelectedStyle = lipgloss.NewStyle().Foreground(cachedSuccessColor).Bold(true)
-	cachedNameMutedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
-	cachedGridLogo          = lipgloss.NewStyle().Foreground(cachedSuccessColor).Bold(true).Render("▲ ") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c2e7")).Bold(true).Render("tree") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#cba6f7")).Bold(true).Render("mu") +
-		lipgloss.NewStyle().Foreground(cachedBlueColor).Bold(true).Render("x")
-	cachedInactiveText      = cachedInactiveStyle.Render("○ inactive")
-	cachedActionTitleStyle  = lipgloss.NewStyle().Foreground(cachedTealColor).Bold(true)
-	cachedActionDescStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
-	cachedActionNormalStyle = lipgloss.NewStyle().Foreground(cachedTextColor)
+	cachedPanelBorder     = lipgloss.RoundedBorder()
+	cachedTrafficActive   string
+	cachedTrafficInactive string
+	cachedBranchStyle     lipgloss.Style
+	cachedActiveStyle     lipgloss.Style
+	cachedInactiveStyle   lipgloss.Style
+	cachedNameStyle       lipgloss.Style
+	cachedNameSelected    lipgloss.Style
+	cachedNameMuted       lipgloss.Style
+	cachedGridLogo        string
+	cachedInactiveText    string
+	cachedActionTitle     lipgloss.Style
+	cachedActionDesc      lipgloss.Style
+	cachedActionNormal    lipgloss.Style
+	cachedDimStyle        lipgloss.Style
 )
+
+func init() {
+	cachedDimStyle = lipgloss.NewStyle().Foreground(dimColor)
+	cachedTrafficActive = lipgloss.NewStyle().Foreground(successColor).Render("●●●")
+	cachedTrafficInactive = lipgloss.NewStyle().Foreground(overlayColor).Render("●●●")
+	cachedBranchStyle = lipgloss.NewStyle().Foreground(accent2)
+	cachedActiveStyle = lipgloss.NewStyle().Foreground(successColor)
+	cachedInactiveStyle = lipgloss.NewStyle().Foreground(overlayColor)
+	cachedNameStyle = lipgloss.NewStyle().Foreground(textColor)
+	cachedNameSelected = lipgloss.NewStyle().Foreground(successColor).Bold(true)
+	cachedNameMuted = lipgloss.NewStyle().Foreground(dimColor)
+	cachedGridLogo = lipgloss.NewStyle().Foreground(successColor).Bold(true).Render("▲ ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c2e7")).Bold(true).Render("tree") +
+		lipgloss.NewStyle().Foreground(accent).Bold(true).Render("mu") +
+		lipgloss.NewStyle().Foreground(accent2).Bold(true).Render("x")
+	cachedInactiveText = cachedInactiveStyle.Render("○ inactive")
+	cachedActionTitle = lipgloss.NewStyle().Foreground(teal).Bold(true)
+	cachedActionDesc = lipgloss.NewStyle().Foreground(dimColor)
+	cachedActionNormal = lipgloss.NewStyle().Foreground(textColor)
+}
 
 type itemKind int
 
@@ -2387,11 +2396,11 @@ func (m *model) renderGridView() string {
 	}
 
 	renderPanel := func(panel gridPanel, globalIdx int, isSelected bool, isActive bool) string {
-		borderColor := cachedBorderColor
-		titleBg := cachedBgColor
+		borderColor := surfaceBg
+		titleBg := panelBg
 		if isSelected {
-			borderColor = cachedSuccessColor
-			titleBg = cachedBorderColor
+			borderColor = successColor
+			titleBg = surfaceBg
 		}
 
 		var traffic string
@@ -2412,9 +2421,9 @@ func (m *model) renderGridView() string {
 
 		var nameStyle lipgloss.Style
 		if isSelected {
-			nameStyle = cachedNameSelectedStyle
+			nameStyle = cachedNameSelected
 		} else if !isActive {
-			nameStyle = cachedNameMutedStyle
+			nameStyle = cachedNameMuted
 		} else {
 			nameStyle = cachedNameStyle
 		}
@@ -2491,19 +2500,19 @@ func (m *model) renderGridView() string {
 
 	renderActionItem := func(icon, title, desc string, selected bool) string {
 		if selected {
-			titleLine := cachedActionTitleStyle.Render(icon + " " + title)
-			descLine := cachedActionDescStyle.Render("  " + desc)
+			titleLine := cachedActionTitle.Render(icon + " " + title)
+			descLine := cachedActionDesc.Render("  " + desc)
 			return lipgloss.NewStyle().
 				Width(gridWidth).
-				Background(cachedBorderColor).
+				Background(surfaceBg).
 				BorderLeft(true).
 				BorderStyle(lipgloss.ThickBorder()).
-				BorderForeground(cachedTealColor).
+				BorderForeground(teal).
 				PaddingLeft(1).
 				Render(titleLine + "\n" + descLine)
 		}
-		titleLine := cachedActionNormalStyle.Render(icon + " " + title)
-		descLine := cachedActionDescStyle.Render("  " + desc)
+		titleLine := cachedActionNormal.Render(icon + " " + title)
+		descLine := cachedActionDesc.Render("  " + desc)
 		return lipgloss.NewStyle().
 			PaddingLeft(2).
 			Render(titleLine + "\n" + descLine)
