@@ -524,23 +524,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		if m.state == stateGridView {
 			wasInAvailable := m.gridInAvailable
-			prevAvailIdx := m.gridAvailIdx
-			prevGridIdx := m.gridIndex
-			m.buildGridPanels()
-			if wasInAvailable && len(m.getFilteredAvailable()) > 0 {
-				m.gridInAvailable = true
-				if prevAvailIdx < len(m.getFilteredAvailable()) {
-					m.gridAvailIdx = prevAvailIdx
-				} else {
-					m.gridAvailIdx = len(m.getFilteredAvailable()) - 1
+			var prevName string
+			if wasInAvailable {
+				filtered := m.getFilteredAvailable()
+				if m.gridAvailIdx < len(filtered) {
+					prevName = filtered[m.gridAvailIdx].name
 				}
-			} else if !wasInAvailable && prevGridIdx >= 0 {
+			} else if m.gridIndex >= 0 {
+				filtered := m.getFilteredGridPanels()
+				if m.gridIndex < len(filtered) {
+					prevName = filtered[m.gridIndex].name
+				}
+			}
+			m.buildGridPanels()
+			if wasInAvailable {
+				filteredAvail := m.getFilteredAvailable()
+				m.gridAvailIdx = 0
+				for i, p := range filteredAvail {
+					if p.name == prevName {
+						m.gridAvailIdx = i
+						break
+					}
+				}
+				if len(filteredAvail) > 0 {
+					m.gridInAvailable = true
+				} else {
+					m.gridInAvailable = false
+				}
+			} else if m.gridIndex >= 0 {
 				filteredPanels := m.getFilteredGridPanels()
-				if prevGridIdx < len(filteredPanels) {
-					m.gridIndex = prevGridIdx
-				} else if len(filteredPanels) > 0 {
-					m.gridIndex = len(filteredPanels) - 1
-				} else if len(m.getFilteredAvailable()) > 0 {
+				m.gridIndex = 0
+				for i, p := range filteredPanels {
+					if p.name == prevName {
+						m.gridIndex = i
+						break
+					}
+				}
+				if len(filteredPanels) == 0 && len(m.getFilteredAvailable()) > 0 {
 					m.gridInAvailable = true
 					m.gridAvailIdx = 0
 				}
@@ -570,23 +590,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		if m.state == stateGridView {
 			wasInAvailable := m.gridInAvailable
-			prevAvailIdx := m.gridAvailIdx
-			prevGridIdx := m.gridIndex
-			m.buildGridPanels()
-			if wasInAvailable && len(m.getFilteredAvailable()) > 0 {
-				m.gridInAvailable = true
-				if prevAvailIdx < len(m.getFilteredAvailable()) {
-					m.gridAvailIdx = prevAvailIdx
-				} else {
-					m.gridAvailIdx = len(m.getFilteredAvailable()) - 1
+			var prevName string
+			if wasInAvailable {
+				filtered := m.getFilteredAvailable()
+				if m.gridAvailIdx < len(filtered) {
+					prevName = filtered[m.gridAvailIdx].name
 				}
-			} else if !wasInAvailable && prevGridIdx >= 0 {
+			} else if m.gridIndex >= 0 {
+				filtered := m.getFilteredGridPanels()
+				if m.gridIndex < len(filtered) {
+					prevName = filtered[m.gridIndex].name
+				}
+			}
+			m.buildGridPanels()
+			if wasInAvailable {
+				filteredAvail := m.getFilteredAvailable()
+				m.gridAvailIdx = 0
+				for i, p := range filteredAvail {
+					if p.name == prevName {
+						m.gridAvailIdx = i
+						break
+					}
+				}
+				if len(filteredAvail) > 0 {
+					m.gridInAvailable = true
+				} else {
+					m.gridInAvailable = false
+				}
+			} else if m.gridIndex >= 0 {
 				filteredPanels := m.getFilteredGridPanels()
-				if prevGridIdx < len(filteredPanels) {
-					m.gridIndex = prevGridIdx
-				} else if len(filteredPanels) > 0 {
-					m.gridIndex = len(filteredPanels) - 1
-				} else if len(m.getFilteredAvailable()) > 0 {
+				m.gridIndex = 0
+				for i, p := range filteredPanels {
+					if p.name == prevName {
+						m.gridIndex = i
+						break
+					}
+				}
+				if len(filteredPanels) == 0 && len(m.getFilteredAvailable()) > 0 {
 					m.gridInAvailable = true
 					m.gridAvailIdx = 0
 				}
