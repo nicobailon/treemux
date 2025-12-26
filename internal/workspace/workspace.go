@@ -2,13 +2,13 @@ package workspace
 
 import (
 	"errors"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/nicobailon/treemux/internal/config"
 	"github.com/nicobailon/treemux/internal/git"
+	"github.com/nicobailon/treemux/internal/shell"
 	"github.com/nicobailon/treemux/internal/tmux"
 )
 
@@ -16,6 +16,7 @@ type Service struct {
 	Git    *git.Git
 	Tmux   *tmux.Tmux
 	Config *config.Config
+	Cmd    shell.Commander
 }
 
 type WorktreeState struct {
@@ -30,8 +31,8 @@ type WorktreeState struct {
 	Processes   []string
 }
 
-func NewService(g *git.Git, t *tmux.Tmux, cfg *config.Config) *Service {
-	return &Service{Git: g, Tmux: t, Config: cfg}
+func NewService(g *git.Git, t *tmux.Tmux, cfg *config.Config, cmd shell.Commander) *Service {
+	return &Service{Git: g, Tmux: t, Config: cfg, Cmd: cmd}
 }
 
 func (s *Service) WorktreePath(name string) string {
@@ -49,8 +50,7 @@ func (s *Service) WorktreePath(name string) string {
 func (s *Service) SessionName(wtPath string) string {
 	switch s.Config.SessionName {
 	case "branch":
-		cmd := exec.Command("git", "-C", wtPath, "branch", "--show-current")
-		out, err := cmd.Output()
+		out, err := s.Cmd.Run("git", "-C", wtPath, "branch", "--show-current")
 		if err == nil {
 			branch := strings.TrimSpace(string(out))
 			if branch != "" {
@@ -78,7 +78,7 @@ func (s *Service) List() ([]WorktreeState, []string, error) {
 		sessionName := s.SessionName(wt.Path)
 		_, has := sessionSet[sessionName]
 		status, _ := s.Git.Status(wt.Path)
-		ahead, behind := aheadBehind(wt.Path)
+		ahead, behind := s.aheadBehind(wt.Path)
 		commits, _ := s.Git.Log(wt.Path, 6)
 		info, _ := s.Tmux.SessionInfo(sessionName)
 		procs, _ := s.Tmux.RunningProcesses(sessionName)
@@ -161,23 +161,22 @@ func (s *Service) AdoptOrphan(sessionName, baseBranch string) (string, error) {
 	if err := s.Git.WorktreeAdd(path, sessionName, baseBranch); err != nil {
 		return "", err
 	}
-	// retarget session to new path
-	_ = exec.Command("tmux", "send-keys", "-t", sessionName, "cd '"+path+"'", "Enter").Run()
+	_, _ = s.Cmd.Run("tmux", "send-keys", "-t", sessionName, "cd '"+path+"'", "Enter")
 	return path, nil
 }
 
-func aheadBehind(path string) (int, int) {
+func (s *Service) aheadBehind(path string) (int, int) {
 	ahead := 0
 	behind := 0
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--abbrev-ref", "@{upstream}")
-	if err := cmd.Run(); err != nil {
+	_, err := s.Cmd.Run("git", "-C", path, "rev-parse", "--abbrev-ref", "@{upstream}")
+	if err != nil {
 		return ahead, behind
 	}
-	if out, err := exec.Command("git", "-C", path, "rev-list", "--count", "@{upstream}..HEAD").Output(); err == nil {
+	if out, err := s.Cmd.Run("git", "-C", path, "rev-list", "--count", "@{upstream}..HEAD"); err == nil {
 		val, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 		ahead = val
 	}
-	if out, err := exec.Command("git", "-C", path, "rev-list", "--count", "HEAD..@{upstream}").Output(); err == nil {
+	if out, err := s.Cmd.Run("git", "-C", path, "rev-list", "--count", "HEAD..@{upstream}"); err == nil {
 		val, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 		behind = val
 	}

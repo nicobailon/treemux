@@ -9,6 +9,7 @@ import (
 	"github.com/nicobailon/treemux/internal/config"
 	"github.com/nicobailon/treemux/internal/deps"
 	"github.com/nicobailon/treemux/internal/git"
+	"github.com/nicobailon/treemux/internal/shell"
 	"github.com/nicobailon/treemux/internal/tmux"
 	"github.com/nicobailon/treemux/internal/tui"
 	"github.com/nicobailon/treemux/internal/workspace"
@@ -65,12 +66,13 @@ func loadServices() (*config.Config, *git.Git, *tmux.Tmux, *workspace.Service, b
 	if err != nil {
 		return nil, nil, nil, nil, false, err
 	}
-	t := &tmux.Tmux{}
-	g, err := git.New()
+	cmd := &shell.ExecCommander{}
+	t := &tmux.Tmux{Cmd: cmd}
+	g, err := git.New(cmd)
 	if err != nil {
 		return cfg, nil, t, nil, false, nil
 	}
-	svc := workspace.NewService(g, t, cfg)
+	svc := workspace.NewService(g, t, cfg, cmd)
 	return cfg, g, t, svc, true, nil
 }
 

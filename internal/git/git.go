@@ -1,24 +1,26 @@
 package git
 
 import (
-	"bytes"
 	"errors"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/nicobailon/treemux/internal/shell"
 )
 
 type Git struct {
 	RepoRoot string
+	Cmd      shell.Commander
 }
 
-func New() (*Git, error) {
+func New(cmd shell.Commander) (*Git, error) {
 	root, err := repoRoot()
 	if err != nil {
 		return nil, err
 	}
-	return &Git{RepoRoot: root}, nil
+	return &Git{RepoRoot: root, Cmd: cmd}, nil
 }
 
 func repoRoot() (string, error) {
@@ -31,15 +33,11 @@ func repoRoot() (string, error) {
 }
 
 func (g *Git) run(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = g.RepoRoot
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return out.String(), err
+	out, err := g.Cmd.RunDir(g.RepoRoot, "git", args...)
+	if err != nil {
+		return string(out), err
 	}
-	return out.String(), nil
+	return string(out), nil
 }
 
 func (g *Git) DefaultBranch() string {
@@ -133,9 +131,7 @@ type StatusSummary struct {
 }
 
 func (g *Git) Status(path string) (*StatusSummary, error) {
-	cmd := exec.Command("git", "status", "--short")
-	cmd.Dir = path
-	out, err := cmd.Output()
+	out, err := g.Cmd.RunDir(path, "git", "status", "--short")
 	if err != nil {
 		return nil, err
 	}
@@ -163,9 +159,7 @@ type Commit struct {
 }
 
 func (g *Git) Log(path string, n int) ([]Commit, error) {
-	cmd := exec.Command("git", "log", "--oneline", "-n", strconv.Itoa(n))
-	cmd.Dir = path
-	out, err := cmd.Output()
+	out, err := g.Cmd.RunDir(path, "git", "log", "--oneline", "-n", strconv.Itoa(n))
 	if err != nil {
 		return nil, err
 	}

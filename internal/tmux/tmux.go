@@ -3,32 +3,35 @@ package tmux
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nicobailon/treemux/internal/shell"
 )
 
-type Tmux struct{}
+type Tmux struct {
+	Cmd shell.Commander
+}
 
 func (t *Tmux) HasSession(name string) bool {
-	cmd := exec.Command("tmux", "has-session", "-t", name)
-	return cmd.Run() == nil
+	_, err := t.Cmd.Run("tmux", "has-session", "-t", name)
+	return err == nil
 }
 
 func (t *Tmux) NewSession(name, path string) error {
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", name, "-c", path)
-	return cmd.Run()
+	_, err := t.Cmd.Run("tmux", "new-session", "-d", "-s", name, "-c", path)
+	return err
 }
 
 func (t *Tmux) KillSession(name string) error {
-	cmd := exec.Command("tmux", "kill-session", "-t", name)
-	return cmd.Run()
+	_, err := t.Cmd.Run("tmux", "kill-session", "-t", name)
+	return err
 }
 
 func (t *Tmux) SwitchClient(name string) error {
-	cmd := exec.Command("tmux", "switch-client", "-t", name)
-	return cmd.Run()
+	_, err := t.Cmd.Run("tmux", "switch-client", "-t", name)
+	return err
 }
 
 func (t *Tmux) AttachOrCreate(name, path string) error {
@@ -37,15 +40,14 @@ func (t *Tmux) AttachOrCreate(name, path string) error {
 			return err
 		}
 	}
-	cmd := exec.Command("tmux", "attach", "-t", name)
-	return cmd.Run()
+	_, err := t.Cmd.Run("tmux", "attach", "-t", name)
+	return err
 }
 
 func (t *Tmux) ListSessions() ([]Session, error) {
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-	out, err := cmd.Output()
+	out, err := t.Cmd.Run("tmux", "list-sessions", "-F", "#{session_name}")
 	if err != nil {
-		return []Session{}, nil // treat absence of tmux as no sessions
+		return []Session{}, nil
 	}
 	var sessions []Session
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -71,13 +73,11 @@ type SessionInfo struct {
 }
 
 func (t *Tmux) SessionInfo(name string) (*SessionInfo, error) {
-	winCmd := exec.Command("tmux", "list-windows", "-t", name)
-	winOut, err := winCmd.Output()
+	winOut, err := t.Cmd.Run("tmux", "list-windows", "-t", name)
 	if err != nil {
 		return nil, err
 	}
-	paneCmd := exec.Command("tmux", "list-panes", "-t", name)
-	paneOut, err := paneCmd.Output()
+	paneOut, err := t.Cmd.Run("tmux", "list-panes", "-t", name)
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +87,7 @@ func (t *Tmux) SessionInfo(name string) (*SessionInfo, error) {
 		Panes:   countNonEmptyLines(string(paneOut)),
 	}
 
-	activityCmd := exec.Command("tmux", "display-message", "-t", name, "-p", "#{session_activity}:#{session_attached}")
-	activityOut, err := activityCmd.Output()
+	activityOut, err := t.Cmd.Run("tmux", "display-message", "-t", name, "-p", "#{session_activity}:#{session_attached}")
 	if err == nil {
 		parts := strings.Split(strings.TrimSpace(string(activityOut)), ":")
 		if len(parts) >= 2 {
@@ -103,8 +102,7 @@ func (t *Tmux) SessionInfo(name string) (*SessionInfo, error) {
 }
 
 func (t *Tmux) RunningProcesses(name string) ([]string, error) {
-	cmd := exec.Command("tmux", "list-panes", "-t", name, "-F", "#{pane_pid}")
-	out, err := cmd.Output()
+	out, err := t.Cmd.Run("tmux", "list-panes", "-t", name, "-F", "#{pane_pid}")
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +116,7 @@ func (t *Tmux) RunningProcesses(name string) ([]string, error) {
 
 	procs := map[string]struct{}{}
 	for _, pid := range pids {
-		collectProcessNames(pid, procs)
+		t.collectProcessNames(pid, procs)
 	}
 
 	var list []string
@@ -128,26 +126,24 @@ func (t *Tmux) RunningProcesses(name string) ([]string, error) {
 	return list, nil
 }
 
-func collectProcessNames(pid string, out map[string]struct{}) {
+func (t *Tmux) collectProcessNames(pid string, out map[string]struct{}) {
 	if pid == "" {
 		return
 	}
-	cmd := exec.Command("ps", "-o", "comm=", "-p", pid)
-	if b, err := cmd.Output(); err == nil {
+	if b, err := t.Cmd.Run("ps", "-o", "comm=", "-p", pid); err == nil {
 		name := strings.TrimSpace(string(b))
 		if name != "" {
 			out[name] = struct{}{}
 		}
 	}
-	childCmd := exec.Command("pgrep", "-P", pid)
-	childOut, err := childCmd.Output()
+	childOut, err := t.Cmd.Run("pgrep", "-P", pid)
 	if err != nil {
 		return
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(childOut)), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
-			collectProcessNames(line, out)
+			t.collectProcessNames(line, out)
 		}
 	}
 }
@@ -157,9 +153,8 @@ func (t *Tmux) IsInsideTmux() bool {
 }
 
 func (t *Tmux) CapturePane(sessionName string, lines int) (string, error) {
-	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p",
+	out, err := t.Cmd.Run("tmux", "capture-pane", "-t", sessionName, "-p",
 		"-S", fmt.Sprintf("-%d", lines), "-E", "-1")
-	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
