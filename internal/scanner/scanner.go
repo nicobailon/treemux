@@ -5,18 +5,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/nicobailon/treemux/internal/git"
 )
 
 type RepoWorktree struct {
 	RepoName string
 	RepoRoot string
-	Worktree Worktree
-}
-
-type Worktree struct {
-	Name   string
-	Path   string
-	Branch string
+	Worktree git.Worktree
 }
 
 func ScanForRepos(searchPaths []string) []string {
@@ -66,22 +62,22 @@ func findRepoRoot(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func GetWorktreesForRepo(repoRoot string) []Worktree {
+func GetWorktreesForRepo(repoRoot string) []git.Worktree {
 	cmd := exec.Command("git", "-C", repoRoot, "worktree", "list", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
 
-	var worktrees []Worktree
-	var current Worktree
+	var worktrees []git.Worktree
+	var current git.Worktree
 
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "worktree ") {
 			if current.Path != "" {
 				worktrees = append(worktrees, current)
 			}
-			current = Worktree{Path: strings.TrimPrefix(line, "worktree ")}
+			current = git.Worktree{Path: strings.TrimPrefix(line, "worktree ")}
 			current.Name = filepath.Base(current.Path)
 		} else if strings.HasPrefix(line, "branch ") {
 			branch := strings.TrimPrefix(line, "branch refs/heads/")

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -15,10 +14,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/nicobailon/treemux/internal/config"
-	"github.com/nicobailon/treemux/internal/git"
 	"github.com/nicobailon/treemux/internal/recent"
 	"github.com/nicobailon/treemux/internal/scanner"
 	"github.com/nicobailon/treemux/internal/tmux"
+	"github.com/nicobailon/treemux/internal/tui/builders"
 	"github.com/nicobailon/treemux/internal/tui/components"
 	"github.com/nicobailon/treemux/internal/tui/theme"
 	"github.com/nicobailon/treemux/internal/tui/views"
@@ -75,31 +74,19 @@ type Navigation struct {
 	Loading         bool
 }
 
-type itemKind int
+type listItem = builders.ListItem
 
 const (
-	kindCreate itemKind = iota
-	kindGridView
-	kindWorktree
-	kindOrphan
-	kindRecent
-	kindGlobal
-	kindRepoHeader
-	kindHeader
-	kindSeparator
+	kindCreate     = builders.KindCreate
+	kindGridView   = builders.KindGridView
+	kindWorktree   = builders.KindWorktree
+	kindOrphan     = builders.KindOrphan
+	kindRecent     = builders.KindRecent
+	kindGlobal     = builders.KindGlobal
+	kindRepoHeader = builders.KindRepoHeader
+	kindHeader     = builders.KindHeader
+	kindSeparator  = builders.KindSeparator
 )
-
-type listItem struct {
-	title     string
-	desc      string
-	kind      itemKind
-	data      interface{}
-	isCurrent bool
-}
-
-func (i listItem) Title() string       { return i.title }
-func (i listItem) Description() string { return i.desc }
-func (i listItem) FilterValue() string { return i.title }
 
 type CommandItem struct {
 	label string
@@ -296,134 +283,6 @@ func (m model) previewTickCmd() tea.Cmd {
 	})
 }
 
-func loadPaneContentCmd(t *tmux.Tmux, sessionName string, lines int) tea.Cmd {
-	return func() tea.Msg {
-		content, err := t.CapturePane(sessionName, lines)
-		return paneContentMsg{sessionName: sessionName, content: content, err: err}
-	}
-}
-
-func loadDataCmd(svc *workspace.Service) tea.Cmd {
-	return func() tea.Msg {
-		states, orphans, err := svc.List()
-		if err != nil {
-			return resultMsg{action: "load", err: err}
-		}
-		return dataLoadedMsg{states: states, orphans: orphans}
-	}
-}
-
-func loadGlobalDataCmd(cfg *config.Config, t *tmux.Tmux) tea.Cmd {
-	return func() tea.Msg {
-		worktrees := scanner.ScanAll(cfg.SearchPaths)
-		sessions, _ := t.ListSessions()
-		sessionSet := make(map[string]bool)
-		for _, s := range sessions {
-			sessionSet[s.Name] = true
-		}
-		wtNames := make(map[string]bool)
-		for _, wt := range worktrees {
-			wtNames[wt.Worktree.Name] = true
-		}
-		var orphans []string
-		for name := range sessionSet {
-			if !wtNames[name] {
-				orphans = append(orphans, name)
-			}
-		}
-		return globalDataLoadedMsg{worktrees: worktrees, orphans: orphans}
-	}
-}
-
-func branchesCmd(svc *workspace.Service) tea.Cmd {
-	return func() tea.Msg {
-		branches, err := svc.Git.Branches()
-		if err != nil {
-			return resultMsg{action: "branches", err: err}
-		}
-		def := svc.Git.DefaultBranch()
-		sort.Strings(branches)
-		if def != "" {
-			branches = append([]string{def}, views.FilterStrings(branches, def)...)
-		}
-		return branchesMsg{branches: branches}
-	}
-}
-
-func createWorktreeCmd(svc *workspace.Service, name, branch string) tea.Cmd {
-	return func() tea.Msg {
-		_, err := svc.CreateWorktree(name, branch)
-		return resultMsg{action: "create", err: err}
-	}
-}
-
-func deleteWorktreeCmd(svc *workspace.Service, path string) tea.Cmd {
-	return func() tea.Msg {
-		err := svc.DeleteWorktree(path, true)
-		return resultMsg{action: "delete", err: err}
-	}
-}
-
-func killSessionCmd(svc *workspace.Service, name string) tea.Cmd {
-	return func() tea.Msg {
-		err := svc.KillSession(name)
-		return resultMsg{action: "kill-session", err: err}
-	}
-}
-
-func killSessionDirectCmd(t *tmux.Tmux, name string) tea.Cmd {
-	return func() tea.Msg {
-		err := t.KillSession(name)
-		return resultMsg{action: "kill-session", err: err}
-	}
-}
-
-type jumpMsg struct {
-	sessionName string
-	path        string
-	repoRoot    string
-	worktree    string
-}
-
-func jumpCmd(svc *workspace.Service, name, path string, store *recent.Store) tea.Cmd {
-	return func() tea.Msg {
-		sessionName := svc.SessionName(path)
-		if !svc.Tmux.HasSession(sessionName) {
-			if err := svc.Tmux.NewSession(sessionName, path); err != nil {
-				return resultMsg{action: "jump", err: err}
-			}
-		}
-		if store != nil {
-			store.Add(svc.Git.RepoRoot, name, sessionName, path)
-			_ = store.Save()
-		}
-		return jumpMsg{sessionName: sessionName, path: path, repoRoot: svc.Git.RepoRoot, worktree: name}
-	}
-}
-
-func switchRecentCmd(svc *workspace.Service, entry recent.Entry, store *recent.Store) tea.Cmd {
-	return func() tea.Msg {
-		if store != nil {
-			store.Add(entry.RepoRoot, entry.Worktree, entry.SessionName, entry.Path)
-			_ = store.Save()
-		}
-		return jumpMsg{sessionName: entry.SessionName, path: entry.Path, repoRoot: entry.RepoRoot, worktree: entry.Worktree}
-	}
-}
-
-func switchSessionCmd(svc *workspace.Service, name string) tea.Cmd {
-	return func() tea.Msg {
-		return jumpMsg{sessionName: name}
-	}
-}
-
-func adoptCmd(svc *workspace.Service, name, branch string) tea.Cmd {
-	return func() tea.Msg {
-		_, err := svc.AdoptOrphan(name, branch)
-		return resultMsg{action: "adopt", err: err}
-	}
-}
-
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
@@ -456,16 +315,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.deps.Svc != nil && m.deps.Svc.Git != nil {
 			repoRoot = m.deps.Svc.Git.RepoRoot
 		}
-		m.data.States = reorderCurrentFirst(msg.states, repoRoot)
+		m.data.States = builders.ReorderCurrentFirst(msg.states, repoRoot)
 		m.data.Orphans = msg.orphans
 		if m.deps.RecentStore != nil && repoRoot != "" {
 			m.data.RecentEntries = m.deps.RecentStore.GetOtherProjects(repoRoot, 5)
 		}
-		items := buildItems(m.data.States, m.data.Orphans, m.data.RecentEntries, repoRoot)
+		items := builders.BuildItems(m.data.States, m.data.Orphans, m.data.RecentEntries, repoRoot)
 		m.list.SetItems(items)
 		if m.pending.SelectAfter != "" {
 			for i, item := range items {
-				if li, ok := item.(listItem); ok && li.kind == kindWorktree && li.title == m.pending.SelectAfter {
+				if li, ok := item.(listItem); ok && li.Kind == kindWorktree && li.ItemTitle == m.pending.SelectAfter {
 					m.list.Select(i)
 					break
 				}
@@ -527,11 +386,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.data.GlobalWorktrees = msg.worktrees
 		m.data.Orphans = msg.orphans
-		items := buildGlobalItems(m.data.GlobalWorktrees, m.data.Orphans, m.deps.Tmux)
+		items := builders.BuildGlobalItems(m.data.GlobalWorktrees, m.data.Orphans, m.deps.Tmux)
 		m.list.SetItems(items)
 		if m.pending.SelectAfter != "" {
 			for i, item := range items {
-				if li, ok := item.(listItem); ok && li.kind == kindGlobal && li.title == m.pending.SelectAfter {
+				if li, ok := item.(listItem); ok && li.Kind == kindGlobal && li.ItemTitle == m.pending.SelectAfter {
 					m.list.Select(i)
 					break
 				}
@@ -599,7 +458,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case branchesMsg:
 		items := []list.Item{}
 		for _, b := range msg.branches {
-			items = append(items, listItem{title: b, desc: "base branch", kind: kindWorktree})
+			items = append(items, listItem{ItemTitle: b, ItemDesc: "base branch", Kind: kindWorktree})
 		}
 		m.menu.SetItems(items)
 		selectedIdx := 0
@@ -687,19 +546,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.previewTickCmd()
 		}
 		var sessionName string
-		switch sel.kind {
+		switch sel.Kind {
 		case kindWorktree:
-			wt := sel.data.(workspace.WorktreeState)
+			wt := sel.Data.(workspace.WorktreeState)
 			if wt.HasSession {
 				sessionName = wt.SessionName
 			}
 		case kindGlobal:
-			wt := sel.data.(scanner.RepoWorktree)
+			wt := sel.Data.(scanner.RepoWorktree)
 			if m.deps.Tmux.HasSession(wt.Worktree.Name) {
 				sessionName = wt.Worktree.Name
 			}
 		case kindOrphan:
-			sessionName = sel.title
+			sessionName = sel.ItemTitle
 		}
 		if sessionName != "" {
 			return m, tea.Batch(loadPaneContentCmd(m.deps.Tmux, sessionName, 50), m.previewTickCmd())
@@ -713,17 +572,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sel, ok := m.list.SelectedItem().(listItem)
 			if ok {
 				var expectedSession string
-				switch sel.kind {
+				switch sel.Kind {
 				case kindWorktree:
-					wt := sel.data.(workspace.WorktreeState)
+					wt := sel.Data.(workspace.WorktreeState)
 					if wt.HasSession {
 						expectedSession = wt.SessionName
 					}
 				case kindGlobal:
-					wt := sel.data.(scanner.RepoWorktree)
+					wt := sel.Data.(scanner.RepoWorktree)
 					expectedSession = wt.Worktree.Name
 				case kindOrphan:
-					expectedSession = sel.title
+					expectedSession = sel.ItemTitle
 				}
 				if msg.sessionName == expectedSession {
 					m.paneContent = msg.content
@@ -764,212 +623,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// state-specific handling
 	switch m.nav.State {
 	case stateSelectRepo:
-		var cmd tea.Cmd
-		m.menu, cmd = m.menu.Update(msg)
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.String() {
-			case "enter":
-				idx := m.menu.Index()
-				if idx >= 0 && idx < len(m.data.AvailableRepos) {
-					repo := m.data.AvailableRepos[idx]
-					g := &git.Git{RepoRoot: repo.Root}
-					m.pending.CreateSvc = workspace.NewService(g, m.deps.Tmux, m.deps.Cfg)
-					m.nav.State = stateCreateName
-					m.input.SetValue("")
-					return m, m.input.Focus()
-				}
-			case "esc":
-				m.nav.State = stateMain
-				m.pending.CreateSvc = nil
-			}
-		}
-		return m, cmd
-
+		return handleSelectRepo(&m, msg)
 	case stateCreateName:
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.String() {
-			case "enter":
-				name := strings.TrimSpace(m.input.Value())
-				if name == "" {
-					return m, nil
-				}
-				m.pending.Name = name
-				m.nav.NextBranchState = stateCreateBranch
-				svc := m.deps.Svc
-				if m.pending.CreateSvc != nil {
-					svc = m.pending.CreateSvc
-				}
-				if svc == nil {
-					m.nav.State = stateMain
-					return m, nil
-				}
-				return m, branchesCmd(svc)
-			case "esc":
-				m.nav.State = stateMain
-				m.pending.CreateSvc = nil
-				return m, nil
-			}
-		}
-		return m, cmd
-
+		return handleCreateName(&m, msg)
 	case stateCreateBranch:
-		var cmd tea.Cmd
-		m.menu, cmd = m.menu.Update(msg)
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.String() {
-			case "enter":
-				if sel, ok := m.menu.SelectedItem().(listItem); ok {
-					branch := sel.title
-					name := m.pending.Name
-					svc := m.deps.Svc
-					if m.pending.CreateSvc != nil {
-						svc = m.pending.CreateSvc
-					}
-					if svc == nil {
-						m.nav.State = stateMain
-						return m, nil
-					}
-					m.pending.SelectAfter = filepath.Base(svc.WorktreePath(name))
-					m.nav.State = stateMain
-					return m, createWorktreeCmd(svc, name, branch)
-				}
-			case "esc":
-				m.nav.State = stateMain
-				m.pending.CreateSvc = nil
-			}
-		}
-		return m, cmd
-
+		return handleCreateBranch(&m, msg)
 	case stateOrphanBranch:
-		var cmd tea.Cmd
-		m.menu, cmd = m.menu.Update(msg)
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.String() {
-			case "enter":
-				if m.deps.Svc == nil {
-					m.nav.State = stateMain
-					return m, nil
-				}
-				if sel, ok := m.menu.SelectedItem().(listItem); ok {
-					branch := sel.title
-					name := m.pending.Name
-					m.pending.SelectAfter = filepath.Base(m.deps.Svc.WorktreePath(name))
-					m.nav.State = stateMain
-					return m, adoptCmd(m.deps.Svc, name, branch)
-				}
-			case "esc":
-				m.nav.State = stateMain
-			}
-		}
-		return m, cmd
-
+		return handleOrphanBranch(&m, msg)
 	case stateActionMenu, stateOrphanMenu:
-		var cmd tea.Cmd
-		m.menu, cmd = m.menu.Update(msg)
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.String() {
-			case "enter":
-				item := m.menu.SelectedItem().(listItem)
-				title := item.title
-				switch {
-				case strings.Contains(title, "Jump"):
-					if m.pending.Worktree != nil && m.deps.Svc != nil {
-						sessionName := m.deps.Svc.SessionName(m.pending.Worktree.Worktree.Path)
-						if !m.deps.Svc.Tmux.HasSession(sessionName) {
-							_ = m.deps.Svc.Tmux.NewSession(sessionName, m.pending.Worktree.Worktree.Path)
-						}
-						if m.deps.RecentStore != nil && m.deps.Svc.Git != nil {
-							m.deps.RecentStore.Add(m.deps.Svc.Git.RepoRoot, m.pending.Worktree.Worktree.Name, sessionName, m.pending.Worktree.Worktree.Path)
-							_ = m.deps.RecentStore.Save()
-						}
-						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: m.pending.Worktree.Worktree.Path}
-						return m, tea.Quit
-					}
-					if m.pending.Global != nil {
-						sessionName := m.pending.Global.Worktree.Name
-						if !m.deps.Tmux.HasSession(sessionName) {
-							_ = m.deps.Tmux.NewSession(sessionName, m.pending.Global.Worktree.Path)
-						}
-						if m.deps.RecentStore != nil {
-							m.deps.RecentStore.Add(m.pending.Global.RepoRoot, m.pending.Global.Worktree.Name, sessionName, m.pending.Global.Worktree.Path)
-							_ = m.deps.RecentStore.Save()
-						}
-						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: m.pending.Global.Worktree.Path}
-						return m, tea.Quit
-					}
-					if m.pending.Name != "" {
-						m.jumpTarget = &JumpTarget{SessionName: m.pending.Name}
-						return m, tea.Quit
-					}
-				case strings.Contains(title, "Delete worktree"):
-					if m.pending.Worktree != nil && m.deps.Svc != nil && m.deps.Svc.Git != nil {
-						if m.pending.Worktree.Worktree.Path == m.deps.Svc.Git.RepoRoot {
-							m.toast = &toast{message: "Cannot delete current worktree", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
-							m.nav.State = stateMain
-							return m, toastExpireCmd()
-						}
-						return m, deleteWorktreeCmd(m.deps.Svc, m.pending.Worktree.Worktree.Path)
-					}
-				case strings.Contains(title, "Kill session"):
-					if m.pending.Worktree != nil && m.deps.Svc != nil {
-						return m, killSessionCmd(m.deps.Svc, m.pending.Worktree.SessionName)
-					}
-					if m.pending.Name != "" {
-						if m.nav.GlobalMode {
-							return m, killSessionDirectCmd(m.deps.Tmux, m.pending.Name)
-						}
-						if m.deps.Svc != nil {
-							return m, killSessionCmd(m.deps.Svc, m.pending.Name)
-						}
-					}
-				case strings.Contains(title, "Adopt"):
-					if m.pending.Name != "" && m.deps.Svc != nil {
-						m.nav.NextBranchState = stateOrphanBranch
-						return m, branchesCmd(m.deps.Svc)
-					}
-				}
-				if m.nav.PrevState != 0 {
-					m.nav.State = m.nav.PrevState
-				} else {
-					m.nav.State = stateMain
-				}
-				return m, nil
-			case "esc":
-				if m.nav.PrevState != 0 {
-					m.nav.State = m.nav.PrevState
-				} else {
-					m.nav.State = stateMain
-				}
-				return m, nil
-			}
-		}
-		return m, cmd
-
+		return handleActionMenu(&m, msg)
 	case stateCommandPalette:
-		var cmd tea.Cmd
-		m.commandPalette, cmd = m.commandPalette.Update(msg)
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.String() {
-			case "esc":
-				m.nav.State = stateMain
-				return m, nil
-			case "enter":
-				if item, ok := m.commandPalette.SelectedItem().(CommandItem); ok {
-					m.nav.State = stateMain
-					if item.run != nil {
-						return m, item.run(&m)
-					}
-				}
-				m.nav.State = stateMain
-				return m, nil
-			}
-		}
-		return m, cmd
+		return handleCommandPalette(&m, msg)
 	}
 
 	// main view handling
@@ -1025,31 +691,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "q":
-			if m.nav.State == stateGridView && m.grid.Filtering {
-				m.grid.Filter += "q"
-				m.grid.Index = 0
-				return m, nil
+			if result, cmd := handleGridQ(&m); result != nil {
+				return result, cmd
 			}
 			return m, tea.Quit
 		case "esc":
 			if m.nav.State == stateMain {
 				return m, tea.Quit
 			}
-			if m.nav.State == stateGridDetail {
-				m.nav.State = stateGridView
-				m.grid.DetailPanel = nil
-				return m, nil
-			}
-			if m.nav.State == stateGridView {
-				if m.grid.Filtering {
-					m.grid.Filter = ""
-					m.grid.Filtering = false
-					m.grid.Index = 0
-					m.grid.ScrollOffset = 0
-					return m, nil
-				}
-				m.nav.State = stateMain
-				return m, nil
+			if result, cmd := handleGridEsc(&m); result != nil {
+				return result, cmd
 			}
 		case "?":
 			if m.nav.State == stateHelp {
@@ -1058,10 +709,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.nav.State = stateHelp
 			}
 		case "g":
-			if m.nav.State == stateGridView && m.grid.Filtering {
-				m.grid.Filter += "g"
-				m.grid.Index = 0
-				return m, nil
+			if result, cmd := handleGridG(&m); result != nil {
+				return result, cmd
 			}
 			if m.nav.State == stateMain {
 				m.nav.GlobalMode = !m.nav.GlobalMode
@@ -1076,97 +725,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux))
 			}
 		case "enter":
-			if m.nav.State == stateGridView {
-				if m.grid.Index == -1 {
-					if m.nav.GlobalMode {
-						repos := views.ExtractUniqueRepos(m.data.GlobalWorktrees)
-						if len(repos) == 0 {
-							m.toast = &toast{message: "No repositories found", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
-							return m, toastExpireCmd()
-						}
-						m.data.AvailableRepos = repos
-						items := make([]list.Item, len(repos))
-						for i, r := range repos {
-							items[i] = listItem{title: r.Name, desc: r.Root, kind: kindHeader}
-						}
-						m.menu.SetItems(items)
-						m.menu.Select(0)
-						m.nav.State = stateSelectRepo
-						return m, nil
-					}
-					m.nav.State = stateCreateName
-					m.input.SetValue("")
-					return m, m.input.Focus()
-				}
-				if m.grid.Index == -2 {
-					m.nav.State = stateMain
-					return m, nil
-				}
-				var panel *views.GridPanel
-				if m.grid.InAvailable {
-					filteredAvail := m.grid.FilteredAvailable()
-					if m.grid.AvailIdx < len(filteredAvail) {
-						p := filteredAvail[m.grid.AvailIdx]
-						panel = &p
-					}
-				} else {
-					filteredPanels := m.grid.FilteredPanels()
-					if m.grid.Index >= 0 && m.grid.Index < len(filteredPanels) {
-						p := filteredPanels[m.grid.Index]
-						panel = &p
-					}
-				}
-				if panel != nil {
-					m.grid.DetailPanel = panel
-					m.grid.DetailIdx = 0
-					m.nav.State = stateGridDetail
-				}
-				return m, nil
-			}
-			if m.nav.State == stateGridDetail && m.grid.DetailPanel != nil {
-				panel := m.grid.DetailPanel
-				backIdx := 1
-				if panel.HasSession {
-					backIdx = 2
-				}
-				if panel.IsOrphan {
-					backIdx = 3
-				}
-				if m.grid.DetailIdx == backIdx {
-					m.nav.State = stateGridView
-					m.grid.DetailPanel = nil
-					return m, nil
-				}
-				switch m.grid.DetailIdx {
-				case 0:
-					if panel.HasSession {
-						m.jumpTarget = &JumpTarget{SessionName: panel.SessionName, Path: panel.Path}
-					} else {
-						sessionName := panel.SessionName
-						if sessionName == "" {
-							sessionName = filepath.Base(panel.Name)
-						}
-						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: panel.Path, Create: true}
-					}
-					return m, tea.Quit
-				case 1:
-					if panel.IsOrphan {
-						m.pending.Name = panel.SessionName
-						m.nav.PrevState = stateGridView
-						m.nav.NextBranchState = stateOrphanBranch
-						return m, branchesCmd(m.deps.Svc)
-					} else if panel.HasSession {
-						return m, killSessionCmd(m.deps.Svc, panel.SessionName)
-					}
-				case 2:
-					if panel.IsOrphan {
-						return m, killSessionDirectCmd(m.deps.Tmux, panel.SessionName)
-					}
-				}
-				return m, nil
+			if result, cmd := handleGridEnter(&m); result != nil {
+				return result, cmd
 			}
 			if sel, ok := m.list.SelectedItem().(listItem); ok {
-				switch sel.kind {
+				switch sel.Kind {
 				case kindCreate:
 					if m.nav.GlobalMode {
 						repos := views.ExtractUniqueRepos(m.data.GlobalWorktrees)
@@ -1177,7 +740,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.data.AvailableRepos = repos
 						items := make([]list.Item, len(repos))
 						for i, r := range repos {
-							items[i] = listItem{title: r.Name, desc: r.Root, kind: kindHeader}
+							items[i] = listItem{ItemTitle: r.Name, ItemDesc: r.Root, Kind: kindHeader}
 						}
 						m.menu.SetItems(items)
 						m.menu.Select(0)
@@ -1210,13 +773,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return m, m.loadGridContentCmd()
 				case kindWorktree:
-					wt := sel.data.(workspace.WorktreeState)
+					wt := sel.Data.(workspace.WorktreeState)
 					m.pending.Worktree = &wt
 					m.menu.SetItems(actionMenuItems(wt.HasSession))
 					m.menu.Select(0)
 					m.nav.State = stateActionMenu
 				case kindOrphan:
-					m.pending.Name = sel.title
+					m.pending.Name = sel.ItemTitle
 					m.nav.PrevState = stateMain
 					if m.nav.GlobalMode {
 						m.menu.SetItems(globalOrphanMenuItems())
@@ -1226,7 +789,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.menu.Select(0)
 					m.nav.State = stateOrphanMenu
 				case kindRecent:
-					r := sel.data.(recent.Entry)
+					r := sel.Data.(recent.Entry)
 					if !m.deps.Tmux.HasSession(r.SessionName) {
 						if err := m.deps.Tmux.NewSession(r.SessionName, r.Path); err != nil {
 							m.toast = &toast{message: "Failed to create session: " + err.Error(), kind: toastError, expiresAt: time.Now().Add(toastDuration)}
@@ -1240,7 +803,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.jumpTarget = &JumpTarget{SessionName: r.SessionName, Path: r.Path}
 					return m, tea.Quit
 				case kindGlobal:
-					wt := sel.data.(scanner.RepoWorktree)
+					wt := sel.Data.(scanner.RepoWorktree)
 					m.pending.Global = &wt
 					m.menu.SetItems(globalActionMenuItems())
 					m.menu.Select(0)
@@ -1248,114 +811,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "tab":
-			if m.nav.State == stateGridDetail && m.grid.DetailPanel != nil {
-				maxIdx := 1
-				if m.grid.DetailPanel.HasSession {
-					maxIdx = 2
-				}
-				if m.grid.DetailPanel.IsOrphan {
-					maxIdx = 3
-				}
-				m.grid.DetailIdx++
-				if m.grid.DetailIdx > maxIdx {
-					m.grid.DetailIdx = 0
-				}
-				return m, nil
+			if result, cmd := handleGridTab(&m); result != nil {
+				return result, cmd
 			}
-			if m.nav.State == stateGridView {
-				filteredLen := len(m.grid.FilteredPanels())
-				if m.grid.Index == -1 {
-					m.grid.Index = -2
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.Index == -2 {
-					if filteredLen > 0 {
-						m.grid.Index = 0
-					} else if len(m.grid.FilteredAvailable()) > 0 {
-						m.grid.InAvailable = true
-						m.grid.AvailIdx = 0
-					}
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.InAvailable {
-					if m.grid.AvailIdx < len(m.grid.FilteredAvailable())-1 {
-						m.grid.AvailIdx++
-					} else {
-						m.grid.InAvailable = false
-						m.grid.Index = -1
-					}
-				} else {
-					if m.grid.Index < filteredLen-1 {
-						m.grid.Index++
-					} else if len(m.grid.FilteredAvailable()) > 0 {
-						m.grid.InAvailable = true
-						m.grid.AvailIdx = 0
-					} else {
-						m.grid.Index = -1
-					}
-				}
-				m.grid.UpdateScroll(m.width, m.height)
-				return m, nil
-			}
-			if sel, ok := m.list.SelectedItem().(listItem); ok && sel.kind == kindWorktree {
-				wt := sel.data.(workspace.WorktreeState)
+			if sel, ok := m.list.SelectedItem().(listItem); ok && sel.Kind == kindWorktree {
+				wt := sel.Data.(workspace.WorktreeState)
 				m.pending.Worktree = &wt
 				m.menu.SetItems(actionMenuItems(wt.HasSession))
 				m.menu.Select(0)
 				m.nav.State = stateActionMenu
 			}
 		case "shift+tab":
-			if m.nav.State == stateGridView {
-				filteredLen := len(m.grid.FilteredPanels())
-				if m.grid.Index == -1 {
-					if len(m.grid.FilteredAvailable()) > 0 {
-						m.grid.InAvailable = true
-						m.grid.AvailIdx = len(m.grid.FilteredAvailable()) - 1
-					} else if filteredLen > 0 {
-						m.grid.Index = filteredLen - 1
-					} else {
-						m.grid.Index = -2
-					}
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.Index == -2 {
-					m.grid.Index = -1
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.InAvailable {
-					if m.grid.AvailIdx > 0 {
-						m.grid.AvailIdx--
-					} else if filteredLen > 0 {
-						m.grid.InAvailable = false
-						m.grid.Index = filteredLen - 1
-					} else {
-						m.grid.InAvailable = false
-						m.grid.Index = -2
-					}
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.Index == 0 {
-					m.grid.Index = -2
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.Index > 0 {
-					m.grid.Index--
-				}
-				m.grid.UpdateScroll(m.width, m.height)
-				return m, nil
+			if result, cmd := handleGridShiftTab(&m); result != nil {
+				return result, cmd
 			}
 		case "ctrl+d":
 			if m.nav.GlobalMode || m.deps.Svc == nil {
 				return m, nil
 			}
-			if sel, ok := m.list.SelectedItem().(listItem); ok && sel.kind == kindWorktree {
-				wt := sel.data.(workspace.WorktreeState)
+			if sel, ok := m.list.SelectedItem().(listItem); ok && sel.Kind == kindWorktree {
+				wt := sel.Data.(workspace.WorktreeState)
 				if m.deps.Svc.Git != nil && wt.Worktree.Path == m.deps.Svc.Git.RepoRoot {
 					m.toast = &toast{message: "Cannot delete current worktree", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
 					return m, toastExpireCmd()
@@ -1365,12 +840,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+p":
 			return m, m.openCommandPalette()
 		case "/":
-			if m.nav.State == stateGridView && !m.grid.Filtering {
-				m.grid.Filtering = true
-				m.grid.Filter = ""
-				m.grid.InAvailable = false
-				m.grid.Index = 0
-				return m, nil
+			if result, cmd := handleGridSlash(&m); result != nil {
+				return result, cmd
 			}
 		case "ctrl+g":
 			if m.nav.State == stateMain {
@@ -1400,320 +871,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "left":
-			if m.nav.State == stateGridView {
-				if m.grid.Index == -1 {
-					return m, nil
-				}
-				if m.grid.Index == -2 {
-					m.grid.Index = -1
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.InAvailable {
-					if m.grid.AvailIdx > 0 {
-						m.grid.AvailIdx--
-					} else {
-						filteredLen := len(m.grid.FilteredPanels())
-						if filteredLen > 0 {
-							m.grid.InAvailable = false
-							m.grid.Index = filteredLen - 1
-						} else {
-							m.grid.InAvailable = false
-							m.grid.Index = -2
-						}
-					}
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.Index == 0 {
-					m.grid.Index = -2
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.Index > 0 {
-					m.grid.Index--
-				}
-				m.grid.UpdateScroll(m.width, m.height)
-				return m, nil
+			if result, cmd := handleGridLeft(&m); result != nil {
+				return result, cmd
 			}
 		case "right":
-			if m.nav.State == stateGridView {
-				if m.grid.Index == -1 {
-					m.grid.Index = -2
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.Index == -2 {
-					filteredLen := len(m.grid.FilteredPanels())
-					if filteredLen > 0 {
-						m.grid.Index = 0
-					} else if len(m.grid.FilteredAvailable()) > 0 {
-						m.grid.InAvailable = true
-						m.grid.AvailIdx = 0
-					}
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.InAvailable {
-					if m.grid.AvailIdx < len(m.grid.FilteredAvailable())-1 {
-						m.grid.AvailIdx++
-					}
-				} else {
-					filteredLen := len(m.grid.FilteredPanels())
-					if m.grid.Index < filteredLen-1 {
-						m.grid.Index++
-					} else if len(m.grid.FilteredAvailable()) > 0 {
-						m.grid.InAvailable = true
-						m.grid.AvailIdx = 0
-					}
-				}
-				m.grid.UpdateScroll(m.width, m.height)
-				return m, nil
+			if result, cmd := handleGridRight(&m); result != nil {
+				return result, cmd
 			}
 		case "up":
-			if m.nav.State == stateGridDetail {
-				if m.grid.DetailIdx > 0 {
-					m.grid.DetailIdx--
-				}
-				return m, nil
-			}
-			if m.nav.State == stateGridView {
-				if m.grid.InAvailable {
-					if m.grid.AvailIdx >= m.grid.Cols {
-						m.grid.AvailIdx -= m.grid.Cols
-					} else {
-						filteredPanels := m.grid.FilteredPanels()
-						if len(filteredPanels) > 0 {
-							m.grid.InAvailable = false
-							col := m.grid.AvailIdx % m.grid.Cols
-							lastRow := (len(filteredPanels) - 1) / m.grid.Cols
-							targetIdx := lastRow*m.grid.Cols + col
-							if targetIdx >= len(filteredPanels) {
-								targetIdx = len(filteredPanels) - 1
-							}
-							m.grid.Index = targetIdx
-						} else {
-							m.grid.InAvailable = false
-							m.grid.Index = -2
-						}
-					}
-				} else if m.grid.Index == -1 {
-					return m, nil
-				} else if m.grid.Index == -2 {
-					m.grid.Index = -1
-				} else {
-					filteredPanels := m.grid.FilteredPanels()
-					if m.grid.Index >= len(filteredPanels) || len(filteredPanels) == 0 {
-						m.grid.Index = -2
-						m.grid.UpdateScroll(m.width, m.height)
-						return m, nil
-					}
-					var sessionSectionCount int
-					for _, p := range filteredPanels {
-						if !p.IsRecent && (p.HasSession || p.IsOrphan) {
-							sessionSectionCount++
-						}
-					}
-					currentPanel := filteredPanels[m.grid.Index]
-					if currentPanel.IsRecent {
-						localIdx := m.grid.Index - sessionSectionCount
-						col := localIdx % m.grid.Cols
-						if localIdx >= m.grid.Cols {
-							m.grid.Index -= m.grid.Cols
-						} else if sessionSectionCount > 0 {
-							lastSessionRow := (sessionSectionCount - 1) / m.grid.Cols
-							targetIdx := lastSessionRow*m.grid.Cols + col
-							if targetIdx >= sessionSectionCount {
-								targetIdx = sessionSectionCount - 1
-							}
-							m.grid.Index = targetIdx
-						} else {
-							m.grid.Index = -2
-						}
-					} else {
-						if m.grid.Index >= m.grid.Cols {
-							m.grid.Index -= m.grid.Cols
-						} else {
-							m.grid.Index = -2
-						}
-					}
-				}
-				m.grid.UpdateScroll(m.width, m.height)
-				return m, nil
+			if result, cmd := handleGridUp(&m); result != nil {
+				return result, cmd
 			}
 		case "down":
-			if m.nav.State == stateGridDetail && m.grid.DetailPanel != nil {
-				maxIdx := 1
-				if m.grid.DetailPanel.HasSession {
-					maxIdx = 2
-				}
-				if m.grid.DetailPanel.IsOrphan {
-					maxIdx = 3
-				}
-				if m.grid.DetailIdx < maxIdx {
-					m.grid.DetailIdx++
-				}
-				return m, nil
-			}
-			if m.nav.State == stateGridView {
-				if m.grid.InAvailable {
-					if m.grid.AvailIdx+m.grid.Cols < len(m.grid.FilteredAvailable()) {
-						m.grid.AvailIdx += m.grid.Cols
-					} else {
-						nextRowStart := ((m.grid.AvailIdx / m.grid.Cols) + 1) * m.grid.Cols
-						if nextRowStart < len(m.grid.FilteredAvailable()) {
-							m.grid.AvailIdx = nextRowStart
-						}
-					}
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.Index == -1 {
-					m.grid.Index = -2
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				if m.grid.Index == -2 {
-					filteredPanels := m.grid.FilteredPanels()
-					if len(filteredPanels) > 0 {
-						m.grid.Index = 0
-					} else if len(m.grid.FilteredAvailable()) > 0 {
-						m.grid.InAvailable = true
-						m.grid.AvailIdx = 0
-					}
-					m.grid.UpdateScroll(m.width, m.height)
-					return m, nil
-				}
-				filteredPanels := m.grid.FilteredPanels()
-				if m.grid.Index >= len(filteredPanels) || len(filteredPanels) == 0 {
-					return m, nil
-				}
-				var sessionSectionCount, recentCount int
-				for _, p := range filteredPanels {
-					if !p.IsRecent && (p.HasSession || p.IsOrphan) {
-						sessionSectionCount++
-					} else if p.IsRecent {
-						recentCount++
-					}
-				}
-				currentPanel := filteredPanels[m.grid.Index]
-				if !currentPanel.IsRecent {
-					localIdx := m.grid.Index
-					col := localIdx % m.grid.Cols
-					if localIdx+m.grid.Cols < sessionSectionCount {
-						m.grid.Index += m.grid.Cols
-					} else if recentCount > 0 {
-						targetIdx := sessionSectionCount + col
-						if targetIdx >= sessionSectionCount+recentCount {
-							targetIdx = sessionSectionCount + recentCount - 1
-						}
-						m.grid.Index = targetIdx
-					} else if len(m.grid.FilteredAvailable()) > 0 {
-						m.grid.InAvailable = true
-						m.grid.AvailIdx = col
-						if m.grid.AvailIdx >= len(m.grid.FilteredAvailable()) {
-							m.grid.AvailIdx = len(m.grid.FilteredAvailable()) - 1
-						}
-					}
-				} else {
-					localIdx := m.grid.Index - sessionSectionCount
-					col := localIdx % m.grid.Cols
-					if localIdx+m.grid.Cols < recentCount {
-						m.grid.Index += m.grid.Cols
-					} else if len(m.grid.FilteredAvailable()) > 0 {
-						m.grid.InAvailable = true
-						m.grid.AvailIdx = col
-						if m.grid.AvailIdx >= len(m.grid.FilteredAvailable()) {
-							m.grid.AvailIdx = len(m.grid.FilteredAvailable()) - 1
-						}
-					}
-				}
-				m.grid.UpdateScroll(m.width, m.height)
-				return m, nil
+			if result, cmd := handleGridDown(&m); result != nil {
+				return result, cmd
 			}
 		case "pgdown", "ctrl+f":
-			if m.nav.State == stateGridView {
-				for i := 0; i < 3; i++ {
-					if m.grid.InAvailable {
-						if m.grid.AvailIdx+m.grid.Cols < len(m.grid.FilteredAvailable()) {
-							m.grid.AvailIdx += m.grid.Cols
-						}
-					} else if m.grid.Index >= 0 {
-						filteredLen := len(m.grid.FilteredPanels())
-						if m.grid.Index+m.grid.Cols < filteredLen {
-							m.grid.Index += m.grid.Cols
-						} else if len(m.grid.FilteredAvailable()) > 0 {
-							m.grid.InAvailable = true
-							m.grid.AvailIdx = 0
-						}
-					}
-				}
-				m.grid.UpdateScroll(m.width, m.height)
-				return m, nil
+			if result, cmd := handleGridPageDown(&m); result != nil {
+				return result, cmd
 			}
 		case "pgup", "ctrl+b":
-			if m.nav.State == stateGridView {
-				for i := 0; i < 3; i++ {
-					if m.grid.InAvailable {
-						if m.grid.AvailIdx >= m.grid.Cols {
-							m.grid.AvailIdx -= m.grid.Cols
-						} else {
-							filteredLen := len(m.grid.FilteredPanels())
-							if filteredLen > 0 {
-								m.grid.InAvailable = false
-								m.grid.Index = filteredLen - 1
-							}
-						}
-					} else if m.grid.Index >= m.grid.Cols {
-						m.grid.Index -= m.grid.Cols
-					}
-				}
-				m.grid.UpdateScroll(m.width, m.height)
-				return m, nil
+			if result, cmd := handleGridPageUp(&m); result != nil {
+				return result, cmd
 			}
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			if m.nav.State == stateGridView {
-				if m.grid.Filtering {
-					m.grid.Filter += msg.String()
-					m.grid.Index = 0
-					return m, nil
-				}
-				filteredPanels := m.grid.FilteredPanels()
-				idx := int(msg.String()[0] - '1')
-				if idx >= 0 && idx < len(filteredPanels) {
-					panel := filteredPanels[idx]
-					if panel.IsOrphan {
-						m.pending.Name = panel.SessionName
-						m.nav.PrevState = stateGridView
-						if m.nav.GlobalMode {
-							m.menu.SetItems(globalOrphanMenuItems())
-						} else {
-							m.menu.SetItems(orphanMenuItems())
-						}
-						m.menu.Select(0)
-						m.nav.State = stateOrphanMenu
-						return m, nil
-					}
-					if panel.HasSession {
-						m.jumpTarget = &JumpTarget{SessionName: panel.SessionName, Path: panel.Path}
-						return m, tea.Quit
-					}
-				}
-				return m, nil
+			if result, cmd := handleGridNumberKey(&m, msg.String()); result != nil {
+				return result, cmd
 			}
 		case "backspace":
-			if m.nav.State == stateGridView && m.grid.Filtering {
-				if len(m.grid.Filter) > 0 {
-					m.grid.Filter = m.grid.Filter[:len(m.grid.Filter)-1]
-					m.grid.Index = 0
-				}
-				return m, nil
+			if result, cmd := handleGridBackspace(&m); result != nil {
+				return result, cmd
 			}
 		case "r":
-			if m.nav.State == stateGridView && m.grid.Filtering {
-				m.grid.Filter += "r"
-				m.grid.Index = 0
-				return m, nil
+			if result, cmd := handleGridR(&m); result != nil {
+				return result, cmd
 			}
 			m.toast = &toast{message: "Refreshing...", kind: toastInfo, expiresAt: time.Now().Add(toastDuration)}
 			m.refreshInFlight++
@@ -1726,19 +917,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(loadDataCmd(m.deps.Svc), toastExpireCmd())
 		default:
-			if m.nav.State == stateGridView && m.grid.Filtering {
-				key := msg.String()
-				if len(key) == 1 {
-					ch := key[0]
-					if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-						(ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' {
-						m.grid.Filter += strings.ToLower(key)
-						m.grid.Index = 0
-						m.grid.InAvailable = false
-						m.grid.AvailIdx = 0
-						return m, nil
-					}
-				}
+			if result, cmd := handleGridFilterInput(&m, msg.String()); result != nil {
+				return result, cmd
 			}
 		}
 	case tea.MouseMsg:
@@ -1764,7 +944,7 @@ func (m *model) skipNonSelectable(direction int) {
 		if !ok {
 			break
 		}
-		if item.kind != kindSeparator && item.kind != kindHeader && item.kind != kindRepoHeader {
+		if item.Kind != kindSeparator && item.Kind != kindHeader && item.Kind != kindRepoHeader {
 			break
 		}
 		idx += direction
@@ -1775,122 +955,28 @@ func (m *model) skipNonSelectable(direction int) {
 }
 
 func (m *model) buildGridPanels() {
-	m.grid.Panels = []views.GridPanel{}
-	m.grid.Available = []views.GridPanel{}
+	result := builders.BuildGridPanels(builders.GridBuildInput{
+		GlobalMode:      m.nav.GlobalMode,
+		GlobalWorktrees: m.data.GlobalWorktrees,
+		States:          m.data.States,
+		Orphans:         m.data.Orphans,
+		RecentEntries:   m.data.RecentEntries,
+		Tmux:            m.deps.Tmux,
+		Width:           m.width,
+	})
+	m.grid.Panels = result.Panels
+	m.grid.Available = result.Available
+	m.grid.Cols = result.Cols
 	m.grid.InvalidateFilterCache()
-	
-	if m.nav.GlobalMode {
-		for _, wt := range m.data.GlobalWorktrees {
-			sessionName := wt.Worktree.Name
-			if m.deps.Tmux.HasSession(sessionName) {
-				panel := views.GridPanel{
-					Name:        wt.RepoName + "/" + wt.Worktree.Name,
-					SessionName: sessionName,
-					Path:        wt.Worktree.Path,
-					Branch:      wt.Worktree.Branch,
-					HasSession:  true,
-				}
-				if info, err := m.deps.Tmux.SessionInfo(sessionName); err == nil && info != nil {
-					panel.Windows = info.Windows
-					panel.Panes = info.Panes
-				}
-				m.grid.Panels = append(m.grid.Panels, panel)
-			} else {
-				m.grid.Available = append(m.grid.Available, views.GridPanel{
-					Name:       wt.RepoName + "/" + wt.Worktree.Name,
-					Path:       wt.Worktree.Path,
-					Branch:     wt.Worktree.Branch,
-					HasSession: false,
-				})
-			}
-		}
-	} else {
-		for _, st := range m.data.States {
-			if st.HasSession {
-				panel := views.GridPanel{
-					Name:        st.Worktree.Name,
-					SessionName: st.SessionName,
-					Path:        st.Worktree.Path,
-					Branch:      st.Worktree.Branch,
-					HasSession:  true,
-				}
-				if st.Status != nil {
-					panel.Modified = st.Status.Modified
-					panel.Staged = st.Status.Staged
-				}
-				if st.SessionInfo != nil {
-					panel.Windows = st.SessionInfo.Windows
-					panel.Panes = st.SessionInfo.Panes
-				}
-				panel.Processes = st.Processes
-				m.grid.Panels = append(m.grid.Panels, panel)
-			} else {
-				panel := views.GridPanel{
-					Name:       st.Worktree.Name,
-					Path:       st.Worktree.Path,
-					Branch:     st.Worktree.Branch,
-					HasSession: false,
-				}
-				if st.Status != nil {
-					panel.Modified = st.Status.Modified
-					panel.Staged = st.Status.Staged
-				}
-				m.grid.Available = append(m.grid.Available, panel)
-			}
-		}
-	}
 
-	sortedOrphans := make([]string, len(m.data.Orphans))
-	copy(sortedOrphans, m.data.Orphans)
-	sort.Strings(sortedOrphans)
-	for _, o := range sortedOrphans {
-		panel := views.GridPanel{
-			Name:        o,
-			SessionName: o,
-			HasSession:  true,
-			IsOrphan:    true,
-		}
-		if info, err := m.deps.Tmux.SessionInfo(o); err == nil && info != nil {
-			panel.Windows = info.Windows
-			panel.Panes = info.Panes
-		}
-		m.grid.Panels = append(m.grid.Panels, panel)
-	}
-
-	if !m.nav.GlobalMode {
-		for _, r := range m.data.RecentEntries {
-			sessionName := r.SessionName
-			if sessionName == "" {
-				sessionName = r.Worktree
+	for i := range m.grid.Panels {
+		p := &m.grid.Panels[i]
+		if p.HasSession && p.SessionName != "" {
+			if info, err := m.deps.Tmux.SessionInfo(p.SessionName); err == nil && info != nil {
+				p.Windows = info.Windows
+				p.Panes = info.Panes
 			}
-			panel := views.GridPanel{
-				Name:        r.RepoName + "/" + r.Worktree,
-				SessionName: sessionName,
-				Path:        r.Path,
-				HasSession:  m.deps.Tmux.HasSession(sessionName),
-				IsRecent:    true,
-			}
-			if panel.HasSession {
-				if info, err := m.deps.Tmux.SessionInfo(sessionName); err == nil && info != nil {
-					panel.Windows = info.Windows
-					panel.Panes = info.Panes
-				}
-			}
-			m.grid.Panels = append(m.grid.Panels, panel)
 		}
-	}
-	
-	gridWidth := m.width - 4
-	if gridWidth < 32 {
-		gridWidth = 32
-	}
-	minPanelWidth := 32
-	m.grid.Cols = gridWidth / minPanelWidth
-	if m.grid.Cols < 1 {
-		m.grid.Cols = 1
-	}
-	if m.grid.Cols > 4 {
-		m.grid.Cols = 4
 	}
 }
 
@@ -1936,7 +1022,7 @@ func (m *model) commandPaletteItems() []CommandItem {
 				m.data.AvailableRepos = repos
 				items := make([]list.Item, len(repos))
 				for i, r := range repos {
-					items[i] = listItem{title: r.Name, desc: r.Root, kind: kindHeader}
+					items[i] = listItem{ItemTitle: r.Name, ItemDesc: r.Root, Kind: kindHeader}
 				}
 				m.menu.SetItems(items)
 				m.menu.Select(0)
@@ -1981,12 +1067,12 @@ func (m *model) commandPaletteItems() []CommandItem {
 	}
 
 	if sel, ok := m.list.SelectedItem().(listItem); ok {
-		switch sel.kind {
+		switch sel.Kind {
 		case kindWorktree:
 			if m.deps.Svc == nil {
 				break
 			}
-			wt := sel.data.(workspace.WorktreeState)
+			wt := sel.Data.(workspace.WorktreeState)
 			items = append(items,
 				CommandItem{label: "Jump to worktree", desc: "Switch to selected worktree session", run: func(m *model) tea.Cmd {
 					if m.deps.Svc == nil {
@@ -2023,7 +1109,7 @@ func (m *model) commandPaletteItems() []CommandItem {
 				}})
 			}
 		case kindGlobal:
-			wt := sel.data.(scanner.RepoWorktree)
+			wt := sel.Data.(scanner.RepoWorktree)
 			sessionName := wt.Worktree.Name
 			items = append(items,
 				CommandItem{label: "Jump to worktree", desc: "Switch to selected worktree session", run: func(m *model) tea.Cmd {
@@ -2035,7 +1121,7 @@ func (m *model) commandPaletteItems() []CommandItem {
 				}},
 			)
 		case kindOrphan:
-			sessionName := sel.title
+			sessionName := sel.ItemTitle
 			items = append(items, CommandItem{label: "Kill orphan session", desc: "Kill this orphaned session", run: func(m *model) tea.Cmd {
 				if m.nav.GlobalMode {
 					return killSessionDirectCmd(m.deps.Tmux, sessionName)
@@ -2195,144 +1281,6 @@ func (m model) View() string {
 	)
 }
 
-// Helpers
-
-func buildItems(states []workspace.WorktreeState, orphans []string, recentEntries []recent.Entry, currentPath string) []list.Item {
-	items := []list.Item{}
-	items = append(items, listItem{
-		title: "+ Create new worktree ...",
-		kind:  kindCreate,
-	})
-	hasActiveSessions := len(orphans) > 0
-	if !hasActiveSessions {
-		for _, st := range states {
-			if st.HasSession {
-				hasActiveSessions = true
-				break
-			}
-		}
-	}
-	if hasActiveSessions {
-		items = append(items, listItem{
-			title: "Grid View",
-			kind:  kindGridView,
-		})
-	}
-	if len(states) > 0 {
-		items = append(items, listItem{title: "WORKTREES", kind: kindHeader})
-		for _, st := range states {
-			items = append(items, listItem{
-				title:     st.Worktree.Name,
-				kind:      kindWorktree,
-				data:      st,
-				isCurrent: st.Worktree.Path == currentPath,
-			})
-		}
-	}
-	if len(recentEntries) > 0 {
-		items = append(items, listItem{kind: kindSeparator})
-		items = append(items, listItem{title: "RECENT", kind: kindHeader})
-		for _, r := range recentEntries {
-			items = append(items, listItem{
-				title: r.RepoName + "/" + r.Worktree,
-				kind:  kindRecent,
-				data:  r,
-			})
-		}
-	}
-	if len(orphans) > 0 {
-		items = append(items, listItem{kind: kindSeparator})
-		items = append(items, listItem{title: "ORPHANED SESSIONS", kind: kindHeader})
-		for _, o := range orphans {
-			items = append(items, listItem{
-				title: o,
-				kind:  kindOrphan,
-				data:  o,
-			})
-		}
-	}
-	return items
-}
-
-func buildGlobalItems(worktrees []scanner.RepoWorktree, orphans []string, tmux *tmux.Tmux) []list.Item {
-	items := []list.Item{}
-	items = append(items, listItem{
-		title: "+ New Worktree",
-		desc:  "Create worktree and session",
-		kind:  kindCreate,
-	})
-	if len(orphans) > 0 || len(worktrees) > 0 {
-		items = append(items, listItem{
-			title: "Grid View",
-			desc:  "View all sessions",
-			kind:  kindGridView,
-		})
-	}
-
-	var withSession, withoutSession []scanner.RepoWorktree
-	for _, wt := range worktrees {
-		if tmux.HasSession(wt.Worktree.Name) {
-			withSession = append(withSession, wt)
-		} else {
-			withoutSession = append(withoutSession, wt)
-		}
-	}
-
-	if len(withSession) > 0 {
-		items = append(items, listItem{title: "SESSIONS", kind: kindHeader})
-		for _, wt := range withSession {
-			items = append(items, listItem{
-				title: wt.RepoName + "/" + wt.Worktree.Name,
-				desc:  wt.Worktree.Branch,
-				kind:  kindGlobal,
-				data:  wt,
-			})
-		}
-	}
-
-	if len(withoutSession) > 0 {
-		if len(withSession) > 0 {
-			items = append(items, listItem{kind: kindSeparator})
-		}
-		items = append(items, listItem{title: "AVAILABLE WORKTREES", kind: kindHeader})
-		for _, wt := range withoutSession {
-			items = append(items, listItem{
-				title: wt.RepoName + "/" + wt.Worktree.Name,
-				desc:  wt.Worktree.Branch,
-				kind:  kindGlobal,
-				data:  wt,
-			})
-		}
-	}
-
-	if len(orphans) > 0 {
-		items = append(items, listItem{kind: kindSeparator})
-		items = append(items, listItem{title: "ORPHANED SESSIONS (no worktree)", kind: kindHeader})
-		for _, o := range orphans {
-			items = append(items, listItem{
-				title: o,
-				desc:  "orphaned session",
-				kind:  kindOrphan,
-				data:  o,
-			})
-		}
-	}
-	return items
-}
-
-func reorderCurrentFirst(states []workspace.WorktreeState, currentPath string) []workspace.WorktreeState {
-	head := []workspace.WorktreeState{}
-	tail := []workspace.WorktreeState{}
-	for _, st := range states {
-		if st.Worktree.Path == currentPath {
-			head = append(head, st)
-		} else {
-			tail = append(tail, st)
-		}
-	}
-	return append(head, tail...)
-}
-
 func (m *model) getPreviewContent() string {
 	sel, ok := m.list.SelectedItem().(listItem)
 	if !ok {
@@ -2351,9 +1299,9 @@ func (m *model) getPreviewContent() string {
 	}
 
 	item := components.PreviewItem{
-		Kind:  components.ItemKind(sel.kind),
-		Title: sel.title,
-		Data:  sel.data,
+		Kind:  components.ItemKind(sel.Kind),
+		Title: sel.ItemTitle,
+		Data:  sel.Data,
 	}
 
 	return components.RenderPreview(ctx, item)
@@ -2434,33 +1382,33 @@ type key struct {
 
 func actionMenuItems(hasSession bool) []list.Item {
 	items := []list.Item{
-		listItem{title: theme.IconJump + "  Jump", desc: "Switch to session", kind: kindHeader},
-		listItem{title: theme.IconDelete + "  Delete worktree", desc: "Delete worktree + session", kind: kindHeader},
+		listItem{ItemTitle: theme.IconJump + "  Jump", ItemDesc: "Switch to session", Kind: kindHeader},
+		listItem{ItemTitle: theme.IconDelete + "  Delete worktree", ItemDesc: "Delete worktree + session", Kind: kindHeader},
 	}
 	if hasSession {
-		items = append(items, listItem{title: theme.IconKill + "  Kill session", desc: "Kill tmux session only", kind: kindHeader})
+		items = append(items, listItem{ItemTitle: theme.IconKill + "  Kill session", ItemDesc: "Kill tmux session only", Kind: kindHeader})
 	}
 	return items
 }
 
 func orphanMenuItems() []list.Item {
 	return []list.Item{
-		listItem{title: theme.IconJump + "  Jump", desc: "Switch to session", kind: kindHeader},
-		listItem{title: theme.IconAdopt + "  Adopt", desc: "Create worktree for this session", kind: kindHeader},
-		listItem{title: theme.IconKill + "  Kill session", desc: "Kill orphaned session", kind: kindHeader},
+		listItem{ItemTitle: theme.IconJump + "  Jump", ItemDesc: "Switch to session", Kind: kindHeader},
+		listItem{ItemTitle: theme.IconAdopt + "  Adopt", ItemDesc: "Create worktree for this session", Kind: kindHeader},
+		listItem{ItemTitle: theme.IconKill + "  Kill session", ItemDesc: "Kill orphaned session", Kind: kindHeader},
 	}
 }
 
 func globalActionMenuItems() []list.Item {
 	return []list.Item{
-		listItem{title: theme.IconJump + "  Jump", desc: "Switch to session", kind: kindHeader},
+		listItem{ItemTitle: theme.IconJump + "  Jump", ItemDesc: "Switch to session", Kind: kindHeader},
 	}
 }
 
 func globalOrphanMenuItems() []list.Item {
 	return []list.Item{
-		listItem{title: theme.IconJump + "  Jump", desc: "Switch to session", kind: kindHeader},
-		listItem{title: theme.IconKill + "  Kill session", desc: "Kill orphaned session", kind: kindHeader},
+		listItem{ItemTitle: theme.IconJump + "  Jump", ItemDesc: "Switch to session", Kind: kindHeader},
+		listItem{ItemTitle: theme.IconKill + "  Kill session", ItemDesc: "Kill orphaned session", Kind: kindHeader},
 	}
 }
 
@@ -2498,7 +1446,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	}
 
 	var accentColor lipgloss.Color
-	switch i.kind {
+	switch i.Kind {
 	case kindCreate:
 		accentColor = theme.Teal
 	case kindGridView:
@@ -2522,7 +1470,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 
 	var line1, line2 string
 
-	switch i.kind {
+	switch i.Kind {
 	case kindCreate:
 		if selected {
 			line1 = accentBar + lipgloss.NewStyle().Foreground(accentColor).Bold(true).Render("+ New Worktree")
@@ -2543,7 +1491,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		}
 
 	case kindWorktree:
-		wt := i.data.(workspace.WorktreeState)
+		wt := i.Data.(workspace.WorktreeState)
 		name := wt.Worktree.Name
 		branch := wt.Worktree.Branch
 
@@ -2564,7 +1512,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		}
 
 		indicator := " "
-		if i.isCurrent {
+		if i.IsCurrent {
 			indicator = theme.IconCurrent
 		}
 
@@ -2609,13 +1557,13 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		line2 = ""
 
 	case kindHeader:
-		label := i.title
+		label := i.ItemTitle
 		suffix := ""
 		labelStyle := theme.SectionStyle
-		if i.title == "ORPHANED SESSIONS" {
+		if i.ItemTitle == "ORPHANED SESSIONS" {
 			suffix = " (no worktree)"
 			labelStyle = theme.WarnStyle
-		} else if i.title == "RECENT" {
+		} else if i.ItemTitle == "RECENT" {
 			suffix = " (other projects)"
 		}
 		fullLabel := " " + label + suffix + " "
@@ -2630,7 +1578,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		line2 = ""
 
 	case kindOrphan:
-		name := i.title
+		name := i.ItemTitle
 		orphanStyle := lipgloss.NewStyle().Foreground(theme.Peach).Bold(true)
 		if selected {
 			line1 = accentBar + orphanStyle.Render(theme.IconSession+" "+name)
@@ -2641,7 +1589,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		}
 
 	case kindRecent:
-		name := i.title
+		name := i.ItemTitle
 		recentStyle := lipgloss.NewStyle().Foreground(theme.Accent2).Bold(true)
 		if selected {
 			line1 = accentBar + recentStyle.Render(theme.IconJump+" "+name)
@@ -2652,7 +1600,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		}
 
 	case kindRepoHeader:
-		label := i.title
+		label := i.ItemTitle
 		fullLabel := " " + theme.IconPath + " " + label + " "
 		labelLen := len(label) + 5
 		sideLen := (width - labelLen) / 2
@@ -2665,7 +1613,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		line2 = ""
 
 	case kindGlobal:
-		wt := i.data.(scanner.RepoWorktree)
+		wt := i.Data.(scanner.RepoWorktree)
 		name := wt.Worktree.Name
 		branch := wt.Worktree.Branch
 
@@ -2697,7 +1645,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		}
 	}
 
-	if selected && i.kind != kindSeparator && i.kind != kindHeader && i.kind != kindRepoHeader {
+	if selected && i.Kind != kindSeparator && i.Kind != kindHeader && i.Kind != kindRepoHeader {
 		rowStyle := lipgloss.NewStyle().Background(theme.SurfaceBg).Width(width)
 		if line2 != "" {
 			fmt.Fprint(w, rowStyle.Render(line1)+"\n"+rowStyle.Render(line2))
