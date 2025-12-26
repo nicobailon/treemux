@@ -43,7 +43,37 @@ const (
 
 const defaultRefreshInterval = 3 * time.Second
 
+type Deps struct {
+	Svc         *workspace.Service
+	Cfg         *config.Config
+	Tmux        *tmux.Tmux
+	RecentStore *recent.Store
+}
 
+type WorkspaceData struct {
+	States          []workspace.WorktreeState
+	Orphans         []string
+	RecentEntries   []recent.Entry
+	GlobalWorktrees []scanner.RepoWorktree
+	AvailableRepos  []views.RepoInfo
+}
+
+type PendingAction struct {
+	Name        string
+	Worktree    *workspace.WorktreeState
+	Global      *scanner.RepoWorktree
+	CreateSvc   *workspace.Service
+	SelectAfter string
+}
+
+type Navigation struct {
+	State           viewState
+	PrevState       viewState
+	NextBranchState viewState
+	GlobalMode      bool
+	InGitRepo       bool
+	Loading         bool
+}
 
 type itemKind int
 
@@ -111,37 +141,20 @@ type paneContentMsg struct {
 const previewRefreshInterval = 500 * time.Millisecond
 
 type model struct {
-	svc             *workspace.Service
-	cfg             *config.Config
-	tmux            *tmux.Tmux
-	recentStore     *recent.Store
-	state           viewState
-	nextBranchState viewState
+	deps            Deps
+	data            WorkspaceData
+	pending         PendingAction
+	nav             Navigation
 	list            list.Model
 	preview         viewport.Model
 	input           textinput.Model
 	menu            list.Model
 	spinner         spinner.Model
 	commandPalette  list.Model
-	states          []workspace.WorktreeState
-	orphans         []string
-	recentEntries   []recent.Entry
-	globalWorktrees []scanner.RepoWorktree
 	width           int
 	height          int
 	toast           *toast
-	pending         string
-	pendingWT       *workspace.WorktreeState
-	pendingGlobal   *scanner.RepoWorktree
-	prevState       viewState
-	loading         bool
-	filtering       bool
 	jumpTarget       *JumpTarget
-	globalMode       bool
-	inGitRepo        bool
-	selectAfterLoad  string
-	pendingCreateSvc *workspace.Service
-	availableRepos   []views.RepoInfo
 	refreshInterval  time.Duration
 	refreshInFlight  int
 	paneContent string
@@ -239,21 +252,25 @@ func initialModel(svc *workspace.Service, cfg *config.Config, t *tmux.Tmux, inGi
 	cmdPalette.FilterInput.TextStyle = theme.TextStyle
 
 	return model{
-		svc:             svc,
-		cfg:             cfg,
-		tmux:            t,
-		recentStore:     recentStore,
-		state:           stateGridView,
-		nextBranchState: stateCreateBranch,
+		deps: Deps{
+			Svc:         svc,
+			Cfg:         cfg,
+			Tmux:        t,
+			RecentStore: recentStore,
+		},
+		nav: Navigation{
+			State:           stateGridView,
+			NextBranchState: stateCreateBranch,
+			Loading:         true,
+			GlobalMode:      !inGitRepo,
+			InGitRepo:       inGitRepo,
+		},
 		list:            l,
 		preview:         vp,
 		input:           ti,
 		menu:            menu,
 		commandPalette:  cmdPalette,
 		spinner:         sp,
-		loading:         true,
-		globalMode:      !inGitRepo,
-		inGitRepo:       inGitRepo,
 		refreshInterval: defaultRefreshInterval,
 	}
 }
@@ -261,10 +278,10 @@ func initialModel(svc *workspace.Service, cfg *config.Config, t *tmux.Tmux, inGi
 // TEA plumbing
 
 func (m model) Init() tea.Cmd {
-	if m.globalMode {
-		return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux), m.tickCmd(), m.previewTickCmd())
+	if m.nav.GlobalMode {
+		return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux), m.tickCmd(), m.previewTickCmd())
 	}
-	return tea.Batch(m.spinner.Tick, loadDataCmd(m.svc), m.tickCmd(), m.previewTickCmd())
+	return tea.Batch(m.spinner.Tick, loadDataCmd(m.deps.Svc), m.tickCmd(), m.previewTickCmd())
 }
 
 func (m model) tickCmd() tea.Cmd {
@@ -431,32 +448,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case dataLoadedMsg:
-		m.loading = false
+		m.nav.Loading = false
 		if m.refreshInFlight > 0 {
 			m.refreshInFlight--
 		}
 		repoRoot := ""
-		if m.svc != nil && m.svc.Git != nil {
-			repoRoot = m.svc.Git.RepoRoot
+		if m.deps.Svc != nil && m.deps.Svc.Git != nil {
+			repoRoot = m.deps.Svc.Git.RepoRoot
 		}
-		m.states = reorderCurrentFirst(msg.states, repoRoot)
-		m.orphans = msg.orphans
-		if m.recentStore != nil && repoRoot != "" {
-			m.recentEntries = m.recentStore.GetOtherProjects(repoRoot, 5)
+		m.data.States = reorderCurrentFirst(msg.states, repoRoot)
+		m.data.Orphans = msg.orphans
+		if m.deps.RecentStore != nil && repoRoot != "" {
+			m.data.RecentEntries = m.deps.RecentStore.GetOtherProjects(repoRoot, 5)
 		}
-		items := buildItems(m.states, m.orphans, m.recentEntries, repoRoot)
+		items := buildItems(m.data.States, m.data.Orphans, m.data.RecentEntries, repoRoot)
 		m.list.SetItems(items)
-		if m.selectAfterLoad != "" {
+		if m.pending.SelectAfter != "" {
 			for i, item := range items {
-				if li, ok := item.(listItem); ok && li.kind == kindWorktree && li.title == m.selectAfterLoad {
+				if li, ok := item.(listItem); ok && li.kind == kindWorktree && li.title == m.pending.SelectAfter {
 					m.list.Select(i)
 					break
 				}
 			}
-			m.selectAfterLoad = ""
+			m.pending.SelectAfter = ""
 		}
 		
-		if m.state == stateGridView {
+		if m.nav.State == stateGridView {
 			wasInAvailable := m.grid.InAvailable
 			var prevName string
 			if wasInAvailable {
@@ -504,25 +521,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case globalDataLoadedMsg:
-		m.loading = false
+		m.nav.Loading = false
 		if m.refreshInFlight > 0 {
 			m.refreshInFlight--
 		}
-		m.globalWorktrees = msg.worktrees
-		m.orphans = msg.orphans
-		items := buildGlobalItems(m.globalWorktrees, m.orphans, m.tmux)
+		m.data.GlobalWorktrees = msg.worktrees
+		m.data.Orphans = msg.orphans
+		items := buildGlobalItems(m.data.GlobalWorktrees, m.data.Orphans, m.deps.Tmux)
 		m.list.SetItems(items)
-		if m.selectAfterLoad != "" {
+		if m.pending.SelectAfter != "" {
 			for i, item := range items {
-				if li, ok := item.(listItem); ok && li.kind == kindGlobal && li.title == m.selectAfterLoad {
+				if li, ok := item.(listItem); ok && li.kind == kindGlobal && li.title == m.pending.SelectAfter {
 					m.list.Select(i)
 					break
 				}
 			}
-			m.selectAfterLoad = ""
+			m.pending.SelectAfter = ""
 		}
 		
-		if m.state == stateGridView {
+		if m.nav.State == stateGridView {
 			wasInAvailable := m.grid.InAvailable
 			var prevName string
 			if wasInAvailable {
@@ -586,10 +603,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.menu.SetItems(items)
 		selectedIdx := 0
-		if m.svc != nil && m.svc.Git != nil {
+		if m.deps.Svc != nil && m.deps.Svc.Git != nil {
 			var currentBranch string
-			for _, st := range m.states {
-				if st.Worktree.Path == m.svc.Git.RepoRoot {
+			for _, st := range m.data.States {
+				if st.Worktree.Path == m.deps.Svc.Git.RepoRoot {
 					currentBranch = st.Worktree.Branch
 					break
 				}
@@ -604,7 +621,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.menu.Select(selectedIdx)
-		m.state = m.nextBranchState
+		m.nav.State = m.nav.NextBranchState
 		return m, nil
 
 	case jumpMsg:
@@ -613,7 +630,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case resultMsg:
 		if msg.action == "load" {
-			m.loading = false
+			m.nav.Loading = false
 			if m.refreshInFlight > 0 {
 				m.refreshInFlight--
 			}
@@ -638,31 +655,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.action {
 		case "create", "delete", "kill-session", "adopt":
-			m.state = stateMain
-			m.pendingCreateSvc = nil
-			if m.globalMode {
-				return m, tea.Batch(loadGlobalDataCmd(m.cfg, m.tmux), toastExpireCmd())
+			m.nav.State = stateMain
+			m.pending.CreateSvc = nil
+			if m.nav.GlobalMode {
+				return m, tea.Batch(loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux), toastExpireCmd())
 			}
-			if m.svc == nil {
+			if m.deps.Svc == nil {
 				return m, toastExpireCmd()
 			}
-			return m, tea.Batch(loadDataCmd(m.svc), toastExpireCmd())
+			return m, tea.Batch(loadDataCmd(m.deps.Svc), toastExpireCmd())
 		}
 		return m, nil
 
 	case refreshTickMsg:
-		if m.refreshInFlight > 0 || m.loading {
+		if m.refreshInFlight > 0 || m.nav.Loading {
 			return m, m.tickCmd()
 		}
 		m.refreshInFlight++
-		if m.globalMode {
-			return m, tea.Batch(loadGlobalDataCmd(m.cfg, m.tmux), m.tickCmd())
+		if m.nav.GlobalMode {
+			return m, tea.Batch(loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux), m.tickCmd())
 		}
-		if m.svc == nil {
+		if m.deps.Svc == nil {
 			m.refreshInFlight--
 			return m, m.tickCmd()
 		}
-		return m, tea.Batch(loadDataCmd(m.svc), m.tickCmd())
+		return m, tea.Batch(loadDataCmd(m.deps.Svc), m.tickCmd())
 
 	case previewTickMsg:
 		sel, ok := m.list.SelectedItem().(listItem)
@@ -678,14 +695,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case kindGlobal:
 			wt := sel.data.(scanner.RepoWorktree)
-			if m.tmux.HasSession(wt.Worktree.Name) {
+			if m.deps.Tmux.HasSession(wt.Worktree.Name) {
 				sessionName = wt.Worktree.Name
 			}
 		case kindOrphan:
 			sessionName = sel.title
 		}
 		if sessionName != "" {
-			return m, tea.Batch(loadPaneContentCmd(m.tmux, sessionName, 50), m.previewTickCmd())
+			return m, tea.Batch(loadPaneContentCmd(m.deps.Tmux, sessionName, 50), m.previewTickCmd())
 		}
 		m.paneContent = ""
 		m.paneSession = ""
@@ -748,7 +765,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// state-specific handling
-	switch m.state {
+	switch m.nav.State {
 	case stateSelectRepo:
 		var cmd tea.Cmd
 		m.menu, cmd = m.menu.Update(msg)
@@ -756,17 +773,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch keyMsg.String() {
 			case "enter":
 				idx := m.menu.Index()
-				if idx >= 0 && idx < len(m.availableRepos) {
-					repo := m.availableRepos[idx]
+				if idx >= 0 && idx < len(m.data.AvailableRepos) {
+					repo := m.data.AvailableRepos[idx]
 					g := &git.Git{RepoRoot: repo.Root}
-					m.pendingCreateSvc = workspace.NewService(g, m.tmux, m.cfg)
-					m.state = stateCreateName
+					m.pending.CreateSvc = workspace.NewService(g, m.deps.Tmux, m.deps.Cfg)
+					m.nav.State = stateCreateName
 					m.input.SetValue("")
 					return m, m.input.Focus()
 				}
 			case "esc":
-				m.state = stateMain
-				m.pendingCreateSvc = nil
+				m.nav.State = stateMain
+				m.pending.CreateSvc = nil
 			}
 		}
 		return m, cmd
@@ -781,20 +798,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if name == "" {
 					return m, nil
 				}
-				m.pending = name
-				m.nextBranchState = stateCreateBranch
-				svc := m.svc
-				if m.pendingCreateSvc != nil {
-					svc = m.pendingCreateSvc
+				m.pending.Name = name
+				m.nav.NextBranchState = stateCreateBranch
+				svc := m.deps.Svc
+				if m.pending.CreateSvc != nil {
+					svc = m.pending.CreateSvc
 				}
 				if svc == nil {
-					m.state = stateMain
+					m.nav.State = stateMain
 					return m, nil
 				}
 				return m, branchesCmd(svc)
 			case "esc":
-				m.state = stateMain
-				m.pendingCreateSvc = nil
+				m.nav.State = stateMain
+				m.pending.CreateSvc = nil
 				return m, nil
 			}
 		}
@@ -808,22 +825,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				if sel, ok := m.menu.SelectedItem().(listItem); ok {
 					branch := sel.title
-					name := m.pending
-					svc := m.svc
-					if m.pendingCreateSvc != nil {
-						svc = m.pendingCreateSvc
+					name := m.pending.Name
+					svc := m.deps.Svc
+					if m.pending.CreateSvc != nil {
+						svc = m.pending.CreateSvc
 					}
 					if svc == nil {
-						m.state = stateMain
+						m.nav.State = stateMain
 						return m, nil
 					}
-					m.selectAfterLoad = filepath.Base(svc.WorktreePath(name))
-					m.state = stateMain
+					m.pending.SelectAfter = filepath.Base(svc.WorktreePath(name))
+					m.nav.State = stateMain
 					return m, createWorktreeCmd(svc, name, branch)
 				}
 			case "esc":
-				m.state = stateMain
-				m.pendingCreateSvc = nil
+				m.nav.State = stateMain
+				m.pending.CreateSvc = nil
 			}
 		}
 		return m, cmd
@@ -834,19 +851,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			switch keyMsg.String() {
 			case "enter":
-				if m.svc == nil {
-					m.state = stateMain
+				if m.deps.Svc == nil {
+					m.nav.State = stateMain
 					return m, nil
 				}
 				if sel, ok := m.menu.SelectedItem().(listItem); ok {
 					branch := sel.title
-					name := m.pending
-					m.selectAfterLoad = filepath.Base(m.svc.WorktreePath(name))
-					m.state = stateMain
-					return m, adoptCmd(m.svc, name, branch)
+					name := m.pending.Name
+					m.pending.SelectAfter = filepath.Base(m.deps.Svc.WorktreePath(name))
+					m.nav.State = stateMain
+					return m, adoptCmd(m.deps.Svc, name, branch)
 				}
 			case "esc":
-				m.state = stateMain
+				m.nav.State = stateMain
 			}
 		}
 		return m, cmd
@@ -861,72 +878,72 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				title := item.title
 				switch {
 				case strings.Contains(title, "Jump"):
-					if m.pendingWT != nil && m.svc != nil {
-						sessionName := m.svc.SessionName(m.pendingWT.Worktree.Path)
-						if !m.svc.Tmux.HasSession(sessionName) {
-							_ = m.svc.Tmux.NewSession(sessionName, m.pendingWT.Worktree.Path)
+					if m.pending.Worktree != nil && m.deps.Svc != nil {
+						sessionName := m.deps.Svc.SessionName(m.pending.Worktree.Worktree.Path)
+						if !m.deps.Svc.Tmux.HasSession(sessionName) {
+							_ = m.deps.Svc.Tmux.NewSession(sessionName, m.pending.Worktree.Worktree.Path)
 						}
-						if m.recentStore != nil && m.svc.Git != nil {
-							m.recentStore.Add(m.svc.Git.RepoRoot, m.pendingWT.Worktree.Name, sessionName, m.pendingWT.Worktree.Path)
-							_ = m.recentStore.Save()
+						if m.deps.RecentStore != nil && m.deps.Svc.Git != nil {
+							m.deps.RecentStore.Add(m.deps.Svc.Git.RepoRoot, m.pending.Worktree.Worktree.Name, sessionName, m.pending.Worktree.Worktree.Path)
+							_ = m.deps.RecentStore.Save()
 						}
-						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: m.pendingWT.Worktree.Path}
+						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: m.pending.Worktree.Worktree.Path}
 						return m, tea.Quit
 					}
-					if m.pendingGlobal != nil {
-						sessionName := m.pendingGlobal.Worktree.Name
-						if !m.tmux.HasSession(sessionName) {
-							_ = m.tmux.NewSession(sessionName, m.pendingGlobal.Worktree.Path)
+					if m.pending.Global != nil {
+						sessionName := m.pending.Global.Worktree.Name
+						if !m.deps.Tmux.HasSession(sessionName) {
+							_ = m.deps.Tmux.NewSession(sessionName, m.pending.Global.Worktree.Path)
 						}
-						if m.recentStore != nil {
-							m.recentStore.Add(m.pendingGlobal.RepoRoot, m.pendingGlobal.Worktree.Name, sessionName, m.pendingGlobal.Worktree.Path)
-							_ = m.recentStore.Save()
+						if m.deps.RecentStore != nil {
+							m.deps.RecentStore.Add(m.pending.Global.RepoRoot, m.pending.Global.Worktree.Name, sessionName, m.pending.Global.Worktree.Path)
+							_ = m.deps.RecentStore.Save()
 						}
-						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: m.pendingGlobal.Worktree.Path}
+						m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: m.pending.Global.Worktree.Path}
 						return m, tea.Quit
 					}
-					if m.pending != "" {
-						m.jumpTarget = &JumpTarget{SessionName: m.pending}
+					if m.pending.Name != "" {
+						m.jumpTarget = &JumpTarget{SessionName: m.pending.Name}
 						return m, tea.Quit
 					}
 				case strings.Contains(title, "Delete worktree"):
-					if m.pendingWT != nil && m.svc != nil && m.svc.Git != nil {
-						if m.pendingWT.Worktree.Path == m.svc.Git.RepoRoot {
+					if m.pending.Worktree != nil && m.deps.Svc != nil && m.deps.Svc.Git != nil {
+						if m.pending.Worktree.Worktree.Path == m.deps.Svc.Git.RepoRoot {
 							m.toast = &toast{message: "Cannot delete current worktree", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
-							m.state = stateMain
+							m.nav.State = stateMain
 							return m, toastExpireCmd()
 						}
-						return m, deleteWorktreeCmd(m.svc, m.pendingWT.Worktree.Path)
+						return m, deleteWorktreeCmd(m.deps.Svc, m.pending.Worktree.Worktree.Path)
 					}
 				case strings.Contains(title, "Kill session"):
-					if m.pendingWT != nil && m.svc != nil {
-						return m, killSessionCmd(m.svc, m.pendingWT.SessionName)
+					if m.pending.Worktree != nil && m.deps.Svc != nil {
+						return m, killSessionCmd(m.deps.Svc, m.pending.Worktree.SessionName)
 					}
-					if m.pending != "" {
-						if m.globalMode {
-							return m, killSessionDirectCmd(m.tmux, m.pending)
+					if m.pending.Name != "" {
+						if m.nav.GlobalMode {
+							return m, killSessionDirectCmd(m.deps.Tmux, m.pending.Name)
 						}
-						if m.svc != nil {
-							return m, killSessionCmd(m.svc, m.pending)
+						if m.deps.Svc != nil {
+							return m, killSessionCmd(m.deps.Svc, m.pending.Name)
 						}
 					}
 				case strings.Contains(title, "Adopt"):
-					if m.pending != "" && m.svc != nil {
-						m.nextBranchState = stateOrphanBranch
-						return m, branchesCmd(m.svc)
+					if m.pending.Name != "" && m.deps.Svc != nil {
+						m.nav.NextBranchState = stateOrphanBranch
+						return m, branchesCmd(m.deps.Svc)
 					}
 				}
-				if m.prevState != 0 {
-					m.state = m.prevState
+				if m.nav.PrevState != 0 {
+					m.nav.State = m.nav.PrevState
 				} else {
-					m.state = stateMain
+					m.nav.State = stateMain
 				}
 				return m, nil
 			case "esc":
-				if m.prevState != 0 {
-					m.state = m.prevState
+				if m.nav.PrevState != 0 {
+					m.nav.State = m.nav.PrevState
 				} else {
-					m.state = stateMain
+					m.nav.State = stateMain
 				}
 				return m, nil
 			}
@@ -939,16 +956,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			switch keyMsg.String() {
 			case "esc":
-				m.state = stateMain
+				m.nav.State = stateMain
 				return m, nil
 			case "enter":
 				if item, ok := m.commandPalette.SelectedItem().(CommandItem); ok {
-					m.state = stateMain
+					m.nav.State = stateMain
 					if item.run != nil {
 						return m, item.run(&m)
 					}
 				}
-				m.state = stateMain
+				m.nav.State = stateMain
 				return m, nil
 			}
 		}
@@ -960,7 +977,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	// Handle navigation to skip non-selectable items
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.state != stateGridView && m.state != stateGridDetail {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.nav.State != stateGridView && m.nav.State != stateGridDetail {
 		switch keyMsg.String() {
 		case "j", "down":
 			m.list, cmd = m.list.Update(msg)
@@ -997,7 +1014,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.state != stateGridView && m.state != stateGridDetail {
+	if m.nav.State != stateGridView && m.nav.State != stateGridDetail {
 		m.list, cmd = m.list.Update(msg)
 		cmds = append(cmds, cmd)
 	}
@@ -1008,22 +1025,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "q":
-			if m.state == stateGridView && m.grid.Filtering {
+			if m.nav.State == stateGridView && m.grid.Filtering {
 				m.grid.Filter += "q"
 				m.grid.Index = 0
 				return m, nil
 			}
 			return m, tea.Quit
 		case "esc":
-			if m.state == stateMain {
+			if m.nav.State == stateMain {
 				return m, tea.Quit
 			}
-			if m.state == stateGridDetail {
-				m.state = stateGridView
+			if m.nav.State == stateGridDetail {
+				m.nav.State = stateGridView
 				m.grid.DetailPanel = nil
 				return m, nil
 			}
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				if m.grid.Filtering {
 					m.grid.Filter = ""
 					m.grid.Filtering = false
@@ -1031,58 +1048,58 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.grid.ScrollOffset = 0
 					return m, nil
 				}
-				m.state = stateMain
+				m.nav.State = stateMain
 				return m, nil
 			}
 		case "?":
-			if m.state == stateHelp {
-				m.state = stateMain
+			if m.nav.State == stateHelp {
+				m.nav.State = stateMain
 			} else {
-				m.state = stateHelp
+				m.nav.State = stateHelp
 			}
 		case "g":
-			if m.state == stateGridView && m.grid.Filtering {
+			if m.nav.State == stateGridView && m.grid.Filtering {
 				m.grid.Filter += "g"
 				m.grid.Index = 0
 				return m, nil
 			}
-			if m.state == stateMain {
-				m.globalMode = !m.globalMode
-				m.loading = true
-				if m.globalMode {
-					return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+			if m.nav.State == stateMain {
+				m.nav.GlobalMode = !m.nav.GlobalMode
+				m.nav.Loading = true
+				if m.nav.GlobalMode {
+					return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux))
 				}
-				if m.inGitRepo {
-					return m, tea.Batch(m.spinner.Tick, loadDataCmd(m.svc))
+				if m.nav.InGitRepo {
+					return m, tea.Batch(m.spinner.Tick, loadDataCmd(m.deps.Svc))
 				}
-				m.globalMode = true
-				return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+				m.nav.GlobalMode = true
+				return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux))
 			}
 		case "enter":
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				if m.grid.Index == -1 {
-					if m.globalMode {
-						repos := views.ExtractUniqueRepos(m.globalWorktrees)
+					if m.nav.GlobalMode {
+						repos := views.ExtractUniqueRepos(m.data.GlobalWorktrees)
 						if len(repos) == 0 {
 							m.toast = &toast{message: "No repositories found", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
 							return m, toastExpireCmd()
 						}
-						m.availableRepos = repos
+						m.data.AvailableRepos = repos
 						items := make([]list.Item, len(repos))
 						for i, r := range repos {
 							items[i] = listItem{title: r.Name, desc: r.Root, kind: kindHeader}
 						}
 						m.menu.SetItems(items)
 						m.menu.Select(0)
-						m.state = stateSelectRepo
+						m.nav.State = stateSelectRepo
 						return m, nil
 					}
-					m.state = stateCreateName
+					m.nav.State = stateCreateName
 					m.input.SetValue("")
 					return m, m.input.Focus()
 				}
 				if m.grid.Index == -2 {
-					m.state = stateMain
+					m.nav.State = stateMain
 					return m, nil
 				}
 				var panel *views.GridPanel
@@ -1102,11 +1119,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if panel != nil {
 					m.grid.DetailPanel = panel
 					m.grid.DetailIdx = 0
-					m.state = stateGridDetail
+					m.nav.State = stateGridDetail
 				}
 				return m, nil
 			}
-			if m.state == stateGridDetail && m.grid.DetailPanel != nil {
+			if m.nav.State == stateGridDetail && m.grid.DetailPanel != nil {
 				panel := m.grid.DetailPanel
 				backIdx := 1
 				if panel.HasSession {
@@ -1116,7 +1133,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					backIdx = 3
 				}
 				if m.grid.DetailIdx == backIdx {
-					m.state = stateGridView
+					m.nav.State = stateGridView
 					m.grid.DetailPanel = nil
 					return m, nil
 				}
@@ -1134,16 +1151,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				case 1:
 					if panel.IsOrphan {
-						m.pending = panel.SessionName
-						m.prevState = stateGridView
-						m.nextBranchState = stateOrphanBranch
-						return m, branchesCmd(m.svc)
+						m.pending.Name = panel.SessionName
+						m.nav.PrevState = stateGridView
+						m.nav.NextBranchState = stateOrphanBranch
+						return m, branchesCmd(m.deps.Svc)
 					} else if panel.HasSession {
-						return m, killSessionCmd(m.svc, panel.SessionName)
+						return m, killSessionCmd(m.deps.Svc, panel.SessionName)
 					}
 				case 2:
 					if panel.IsOrphan {
-						return m, killSessionDirectCmd(m.tmux, panel.SessionName)
+						return m, killSessionDirectCmd(m.deps.Tmux, panel.SessionName)
 					}
 				}
 				return m, nil
@@ -1151,38 +1168,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sel, ok := m.list.SelectedItem().(listItem); ok {
 				switch sel.kind {
 				case kindCreate:
-					if m.globalMode {
-						repos := views.ExtractUniqueRepos(m.globalWorktrees)
+					if m.nav.GlobalMode {
+						repos := views.ExtractUniqueRepos(m.data.GlobalWorktrees)
 						if len(repos) == 0 {
 							m.toast = &toast{message: "No repositories found in search paths", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
 							return m, toastExpireCmd()
 						}
-						m.availableRepos = repos
+						m.data.AvailableRepos = repos
 						items := make([]list.Item, len(repos))
 						for i, r := range repos {
 							items[i] = listItem{title: r.Name, desc: r.Root, kind: kindHeader}
 						}
 						m.menu.SetItems(items)
 						m.menu.Select(0)
-						m.state = stateSelectRepo
+						m.nav.State = stateSelectRepo
 						return m, nil
 					}
-					m.state = stateCreateName
+					m.nav.State = stateCreateName
 					m.input.SetValue("")
 					return m, m.input.Focus()
 				case kindGridView:
-					if !m.globalMode {
-						m.globalMode = true
-						m.loading = true
-						m.state = stateGridView
-						return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+					if !m.nav.GlobalMode {
+						m.nav.GlobalMode = true
+						m.nav.Loading = true
+						m.nav.State = stateGridView
+						return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux))
 					}
 					m.buildGridPanels()
 					if len(m.grid.Panels) == 0 && len(m.grid.FilteredAvailable()) == 0 {
 						m.toast = &toast{message: "No sessions or worktrees", kind: toastWarning, expiresAt: time.Now().Add(toastDuration)}
 						return m, toastExpireCmd()
 					}
-					m.state = stateGridView
+					m.nav.State = stateGridView
 					m.grid.Index = 0
 					m.grid.Filter = ""
 					m.grid.Filtering = false
@@ -1194,44 +1211,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.loadGridContentCmd()
 				case kindWorktree:
 					wt := sel.data.(workspace.WorktreeState)
-					m.pendingWT = &wt
+					m.pending.Worktree = &wt
 					m.menu.SetItems(actionMenuItems(wt.HasSession))
 					m.menu.Select(0)
-					m.state = stateActionMenu
+					m.nav.State = stateActionMenu
 				case kindOrphan:
-					m.pending = sel.title
-					m.prevState = stateMain
-					if m.globalMode {
+					m.pending.Name = sel.title
+					m.nav.PrevState = stateMain
+					if m.nav.GlobalMode {
 						m.menu.SetItems(globalOrphanMenuItems())
 					} else {
 						m.menu.SetItems(orphanMenuItems())
 					}
 					m.menu.Select(0)
-					m.state = stateOrphanMenu
+					m.nav.State = stateOrphanMenu
 				case kindRecent:
 					r := sel.data.(recent.Entry)
-					if !m.tmux.HasSession(r.SessionName) {
-						if err := m.tmux.NewSession(r.SessionName, r.Path); err != nil {
+					if !m.deps.Tmux.HasSession(r.SessionName) {
+						if err := m.deps.Tmux.NewSession(r.SessionName, r.Path); err != nil {
 							m.toast = &toast{message: "Failed to create session: " + err.Error(), kind: toastError, expiresAt: time.Now().Add(toastDuration)}
 							return m, toastExpireCmd()
 						}
 					}
-					if m.recentStore != nil {
-						m.recentStore.Add(r.RepoRoot, r.Worktree, r.SessionName, r.Path)
-						_ = m.recentStore.Save()
+					if m.deps.RecentStore != nil {
+						m.deps.RecentStore.Add(r.RepoRoot, r.Worktree, r.SessionName, r.Path)
+						_ = m.deps.RecentStore.Save()
 					}
 					m.jumpTarget = &JumpTarget{SessionName: r.SessionName, Path: r.Path}
 					return m, tea.Quit
 				case kindGlobal:
 					wt := sel.data.(scanner.RepoWorktree)
-					m.pendingGlobal = &wt
+					m.pending.Global = &wt
 					m.menu.SetItems(globalActionMenuItems())
 					m.menu.Select(0)
-					m.state = stateActionMenu
+					m.nav.State = stateActionMenu
 				}
 			}
 		case "tab":
-			if m.state == stateGridDetail && m.grid.DetailPanel != nil {
+			if m.nav.State == stateGridDetail && m.grid.DetailPanel != nil {
 				maxIdx := 1
 				if m.grid.DetailPanel.HasSession {
 					maxIdx = 2
@@ -1245,7 +1262,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				filteredLen := len(m.grid.FilteredPanels())
 				if m.grid.Index == -1 {
 					m.grid.Index = -2
@@ -1284,13 +1301,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if sel, ok := m.list.SelectedItem().(listItem); ok && sel.kind == kindWorktree {
 				wt := sel.data.(workspace.WorktreeState)
-				m.pendingWT = &wt
+				m.pending.Worktree = &wt
 				m.menu.SetItems(actionMenuItems(wt.HasSession))
 				m.menu.Select(0)
-				m.state = stateActionMenu
+				m.nav.State = stateActionMenu
 			}
 		case "shift+tab":
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				filteredLen := len(m.grid.FilteredPanels())
 				if m.grid.Index == -1 {
 					if len(m.grid.FilteredAvailable()) > 0 {
@@ -1334,21 +1351,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "ctrl+d":
-			if m.globalMode || m.svc == nil {
+			if m.nav.GlobalMode || m.deps.Svc == nil {
 				return m, nil
 			}
 			if sel, ok := m.list.SelectedItem().(listItem); ok && sel.kind == kindWorktree {
 				wt := sel.data.(workspace.WorktreeState)
-				if m.svc.Git != nil && wt.Worktree.Path == m.svc.Git.RepoRoot {
+				if m.deps.Svc.Git != nil && wt.Worktree.Path == m.deps.Svc.Git.RepoRoot {
 					m.toast = &toast{message: "Cannot delete current worktree", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
 					return m, toastExpireCmd()
 				}
-				cmds = append(cmds, deleteWorktreeCmd(m.svc, wt.Worktree.Path))
+				cmds = append(cmds, deleteWorktreeCmd(m.deps.Svc, wt.Worktree.Path))
 			}
 		case "ctrl+p":
 			return m, m.openCommandPalette()
 		case "/":
-			if m.state == stateGridView && !m.grid.Filtering {
+			if m.nav.State == stateGridView && !m.grid.Filtering {
 				m.grid.Filtering = true
 				m.grid.Filter = ""
 				m.grid.InAvailable = false
@@ -1356,19 +1373,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "ctrl+g":
-			if m.state == stateMain {
-				if !m.globalMode {
-					m.globalMode = true
-					m.loading = true
-					m.state = stateGridView
-					return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+			if m.nav.State == stateMain {
+				if !m.nav.GlobalMode {
+					m.nav.GlobalMode = true
+					m.nav.Loading = true
+					m.nav.State = stateGridView
+					return m, tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux))
 				}
 				m.buildGridPanels()
 				if len(m.grid.Panels) == 0 && len(m.grid.FilteredAvailable()) == 0 {
 					m.toast = &toast{message: "No sessions or worktrees", kind: toastWarning, expiresAt: time.Now().Add(toastDuration)}
 					return m, toastExpireCmd()
 				}
-				m.state = stateGridView
+				m.nav.State = stateGridView
 				m.grid.Index = 0
 				m.grid.Filter = ""
 				m.grid.Filtering = false
@@ -1378,12 +1395,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.grid.AvailIdx = 0
 				}
 				return m, m.loadGridContentCmd()
-			} else if m.state == stateGridView {
-				m.state = stateMain
+			} else if m.nav.State == stateGridView {
+				m.nav.State = stateMain
 				return m, nil
 			}
 		case "left":
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				if m.grid.Index == -1 {
 					return m, nil
 				}
@@ -1420,7 +1437,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "right":
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				if m.grid.Index == -1 {
 					m.grid.Index = -2
 					m.grid.UpdateScroll(m.width, m.height)
@@ -1454,13 +1471,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "up":
-			if m.state == stateGridDetail {
+			if m.nav.State == stateGridDetail {
 				if m.grid.DetailIdx > 0 {
 					m.grid.DetailIdx--
 				}
 				return m, nil
 			}
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				if m.grid.InAvailable {
 					if m.grid.AvailIdx >= m.grid.Cols {
 						m.grid.AvailIdx -= m.grid.Cols
@@ -1525,7 +1542,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "down":
-			if m.state == stateGridDetail && m.grid.DetailPanel != nil {
+			if m.nav.State == stateGridDetail && m.grid.DetailPanel != nil {
 				maxIdx := 1
 				if m.grid.DetailPanel.HasSession {
 					maxIdx = 2
@@ -1538,7 +1555,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				if m.grid.InAvailable {
 					if m.grid.AvailIdx+m.grid.Cols < len(m.grid.FilteredAvailable()) {
 						m.grid.AvailIdx += m.grid.Cols
@@ -1615,7 +1632,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "pgdown", "ctrl+f":
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				for i := 0; i < 3; i++ {
 					if m.grid.InAvailable {
 						if m.grid.AvailIdx+m.grid.Cols < len(m.grid.FilteredAvailable()) {
@@ -1635,7 +1652,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "pgup", "ctrl+b":
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				for i := 0; i < 3; i++ {
 					if m.grid.InAvailable {
 						if m.grid.AvailIdx >= m.grid.Cols {
@@ -1655,7 +1672,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			if m.state == stateGridView {
+			if m.nav.State == stateGridView {
 				if m.grid.Filtering {
 					m.grid.Filter += msg.String()
 					m.grid.Index = 0
@@ -1666,15 +1683,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if idx >= 0 && idx < len(filteredPanels) {
 					panel := filteredPanels[idx]
 					if panel.IsOrphan {
-						m.pending = panel.SessionName
-						m.prevState = stateGridView
-						if m.globalMode {
+						m.pending.Name = panel.SessionName
+						m.nav.PrevState = stateGridView
+						if m.nav.GlobalMode {
 							m.menu.SetItems(globalOrphanMenuItems())
 						} else {
 							m.menu.SetItems(orphanMenuItems())
 						}
 						m.menu.Select(0)
-						m.state = stateOrphanMenu
+						m.nav.State = stateOrphanMenu
 						return m, nil
 					}
 					if panel.HasSession {
@@ -1685,7 +1702,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "backspace":
-			if m.state == stateGridView && m.grid.Filtering {
+			if m.nav.State == stateGridView && m.grid.Filtering {
 				if len(m.grid.Filter) > 0 {
 					m.grid.Filter = m.grid.Filter[:len(m.grid.Filter)-1]
 					m.grid.Index = 0
@@ -1693,23 +1710,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "r":
-			if m.state == stateGridView && m.grid.Filtering {
+			if m.nav.State == stateGridView && m.grid.Filtering {
 				m.grid.Filter += "r"
 				m.grid.Index = 0
 				return m, nil
 			}
 			m.toast = &toast{message: "Refreshing...", kind: toastInfo, expiresAt: time.Now().Add(toastDuration)}
 			m.refreshInFlight++
-			if m.globalMode {
-				return m, tea.Batch(loadGlobalDataCmd(m.cfg, m.tmux), toastExpireCmd())
+			if m.nav.GlobalMode {
+				return m, tea.Batch(loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux), toastExpireCmd())
 			}
-			if m.svc == nil {
+			if m.deps.Svc == nil {
 				m.refreshInFlight--
 				return m, toastExpireCmd()
 			}
-			return m, tea.Batch(loadDataCmd(m.svc), toastExpireCmd())
+			return m, tea.Batch(loadDataCmd(m.deps.Svc), toastExpireCmd())
 		default:
-			if m.state == stateGridView && m.grid.Filtering {
+			if m.nav.State == stateGridView && m.grid.Filtering {
 				key := msg.String()
 				if len(key) == 1 {
 					ch := key[0]
@@ -1728,7 +1745,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// not used
 	}
 
-	if m.state == stateGridView || m.state == stateGridDetail {
+	if m.nav.State == stateGridView || m.nav.State == stateGridDetail {
 		m.grid.UpdateScroll(m.width, m.height)
 	}
 	
@@ -1762,10 +1779,10 @@ func (m *model) buildGridPanels() {
 	m.grid.Available = []views.GridPanel{}
 	m.grid.InvalidateFilterCache()
 	
-	if m.globalMode {
-		for _, wt := range m.globalWorktrees {
+	if m.nav.GlobalMode {
+		for _, wt := range m.data.GlobalWorktrees {
 			sessionName := wt.Worktree.Name
-			if m.tmux.HasSession(sessionName) {
+			if m.deps.Tmux.HasSession(sessionName) {
 				panel := views.GridPanel{
 					Name:        wt.RepoName + "/" + wt.Worktree.Name,
 					SessionName: sessionName,
@@ -1773,7 +1790,7 @@ func (m *model) buildGridPanels() {
 					Branch:      wt.Worktree.Branch,
 					HasSession:  true,
 				}
-				if info, err := m.tmux.SessionInfo(sessionName); err == nil && info != nil {
+				if info, err := m.deps.Tmux.SessionInfo(sessionName); err == nil && info != nil {
 					panel.Windows = info.Windows
 					panel.Panes = info.Panes
 				}
@@ -1788,7 +1805,7 @@ func (m *model) buildGridPanels() {
 			}
 		}
 	} else {
-		for _, st := range m.states {
+		for _, st := range m.data.States {
 			if st.HasSession {
 				panel := views.GridPanel{
 					Name:        st.Worktree.Name,
@@ -1823,8 +1840,8 @@ func (m *model) buildGridPanels() {
 		}
 	}
 
-	sortedOrphans := make([]string, len(m.orphans))
-	copy(sortedOrphans, m.orphans)
+	sortedOrphans := make([]string, len(m.data.Orphans))
+	copy(sortedOrphans, m.data.Orphans)
 	sort.Strings(sortedOrphans)
 	for _, o := range sortedOrphans {
 		panel := views.GridPanel{
@@ -1833,15 +1850,15 @@ func (m *model) buildGridPanels() {
 			HasSession:  true,
 			IsOrphan:    true,
 		}
-		if info, err := m.tmux.SessionInfo(o); err == nil && info != nil {
+		if info, err := m.deps.Tmux.SessionInfo(o); err == nil && info != nil {
 			panel.Windows = info.Windows
 			panel.Panes = info.Panes
 		}
 		m.grid.Panels = append(m.grid.Panels, panel)
 	}
 
-	if !m.globalMode {
-		for _, r := range m.recentEntries {
+	if !m.nav.GlobalMode {
+		for _, r := range m.data.RecentEntries {
 			sessionName := r.SessionName
 			if sessionName == "" {
 				sessionName = r.Worktree
@@ -1850,11 +1867,11 @@ func (m *model) buildGridPanels() {
 				Name:        r.RepoName + "/" + r.Worktree,
 				SessionName: sessionName,
 				Path:        r.Path,
-				HasSession:  m.tmux.HasSession(sessionName),
+				HasSession:  m.deps.Tmux.HasSession(sessionName),
 				IsRecent:    true,
 			}
 			if panel.HasSession {
-				if info, err := m.tmux.SessionInfo(sessionName); err == nil && info != nil {
+				if info, err := m.deps.Tmux.SessionInfo(sessionName); err == nil && info != nil {
 					panel.Windows = info.Windows
 					panel.Panes = info.Panes
 				}
@@ -1879,7 +1896,7 @@ func (m *model) buildGridPanels() {
 
 func (m *model) loadGridContentCmd() tea.Cmd {
 	panels := m.grid.Panels
-	tmux := m.tmux
+	tmux := m.deps.Tmux
 	return func() tea.Msg {
 		contents := make(map[string]string)
 		for _, p := range panels {
@@ -1903,59 +1920,59 @@ func (m *model) openCommandPalette() tea.Cmd {
 	m.commandPalette.SetItems(listItems)
 	m.commandPalette.ResetFilter()
 	m.commandPalette.SetFilterState(list.Filtering)
-	m.state = stateCommandPalette
+	m.nav.State = stateCommandPalette
 	return nil
 }
 
 func (m *model) commandPaletteItems() []CommandItem {
 	items := []CommandItem{
 		{label: "Create worktree", desc: "Create new worktree from branch", run: func(m *model) tea.Cmd {
-			if m.globalMode {
-				repos := views.ExtractUniqueRepos(m.globalWorktrees)
+			if m.nav.GlobalMode {
+				repos := views.ExtractUniqueRepos(m.data.GlobalWorktrees)
 				if len(repos) == 0 {
 					m.toast = &toast{message: "No repositories found", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
 					return toastExpireCmd()
 				}
-				m.availableRepos = repos
+				m.data.AvailableRepos = repos
 				items := make([]list.Item, len(repos))
 				for i, r := range repos {
 					items[i] = listItem{title: r.Name, desc: r.Root, kind: kindHeader}
 				}
 				m.menu.SetItems(items)
 				m.menu.Select(0)
-				m.state = stateSelectRepo
+				m.nav.State = stateSelectRepo
 				return nil
 			}
-			m.state = stateCreateName
+			m.nav.State = stateCreateName
 			m.input.SetValue("")
 			return m.input.Focus()
 		}},
 		{label: "Toggle global mode", desc: "Switch between repo and global view", run: func(m *model) tea.Cmd {
-			m.globalMode = !m.globalMode
-			m.loading = true
-			if m.globalMode {
-				return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+			m.nav.GlobalMode = !m.nav.GlobalMode
+			m.nav.Loading = true
+			if m.nav.GlobalMode {
+				return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux))
 			}
-			if m.inGitRepo {
-				return tea.Batch(m.spinner.Tick, loadDataCmd(m.svc))
+			if m.nav.InGitRepo {
+				return tea.Batch(m.spinner.Tick, loadDataCmd(m.deps.Svc))
 			}
-			m.globalMode = true
-			return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.cfg, m.tmux))
+			m.nav.GlobalMode = true
+			return tea.Batch(m.spinner.Tick, loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux))
 		}},
 		{label: "Refresh", desc: "Reload worktree and session data", run: func(m *model) tea.Cmd {
 			m.toast = &toast{message: "Refreshing...", kind: toastInfo, expiresAt: time.Now().Add(toastDuration)}
 			m.refreshInFlight++
-			if m.globalMode {
-				return tea.Batch(loadGlobalDataCmd(m.cfg, m.tmux), toastExpireCmd())
+			if m.nav.GlobalMode {
+				return tea.Batch(loadGlobalDataCmd(m.deps.Cfg, m.deps.Tmux), toastExpireCmd())
 			}
-			if m.svc == nil {
+			if m.deps.Svc == nil {
 				m.refreshInFlight--
 				return toastExpireCmd()
 			}
-			return tea.Batch(loadDataCmd(m.svc), toastExpireCmd())
+			return tea.Batch(loadDataCmd(m.deps.Svc), toastExpireCmd())
 		}},
 		{label: "Show help", desc: "Display keybindings and commands", run: func(m *model) tea.Cmd {
-			m.state = stateHelp
+			m.nav.State = stateHelp
 			return nil
 		}},
 		{label: "Quit", desc: "Exit treemux", run: func(m *model) tea.Cmd {
@@ -1966,43 +1983,43 @@ func (m *model) commandPaletteItems() []CommandItem {
 	if sel, ok := m.list.SelectedItem().(listItem); ok {
 		switch sel.kind {
 		case kindWorktree:
-			if m.svc == nil {
+			if m.deps.Svc == nil {
 				break
 			}
 			wt := sel.data.(workspace.WorktreeState)
 			items = append(items,
 				CommandItem{label: "Jump to worktree", desc: "Switch to selected worktree session", run: func(m *model) tea.Cmd {
-					if m.svc == nil {
+					if m.deps.Svc == nil {
 						return nil
 					}
-					sessionName := m.svc.SessionName(wt.Worktree.Path)
-					if !m.svc.Tmux.HasSession(sessionName) {
-						_ = m.svc.Tmux.NewSession(sessionName, wt.Worktree.Path)
+					sessionName := m.deps.Svc.SessionName(wt.Worktree.Path)
+					if !m.deps.Svc.Tmux.HasSession(sessionName) {
+						_ = m.deps.Svc.Tmux.NewSession(sessionName, wt.Worktree.Path)
 					}
-					if m.recentStore != nil && m.svc.Git != nil {
-						m.recentStore.Add(m.svc.Git.RepoRoot, wt.Worktree.Name, sessionName, wt.Worktree.Path)
-						_ = m.recentStore.Save()
+					if m.deps.RecentStore != nil && m.deps.Svc.Git != nil {
+						m.deps.RecentStore.Add(m.deps.Svc.Git.RepoRoot, wt.Worktree.Name, sessionName, wt.Worktree.Path)
+						_ = m.deps.RecentStore.Save()
 					}
 					m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: wt.Worktree.Path}
 					return tea.Quit
 				}},
 				CommandItem{label: "Delete worktree", desc: "Remove worktree and kill session", run: func(m *model) tea.Cmd {
-					if m.svc == nil || m.svc.Git == nil {
+					if m.deps.Svc == nil || m.deps.Svc.Git == nil {
 						return nil
 					}
-					if wt.Worktree.Path == m.svc.Git.RepoRoot {
+					if wt.Worktree.Path == m.deps.Svc.Git.RepoRoot {
 						m.toast = &toast{message: "Cannot delete current worktree", kind: toastError, expiresAt: time.Now().Add(toastDuration)}
 						return toastExpireCmd()
 					}
-					return deleteWorktreeCmd(m.svc, wt.Worktree.Path)
+					return deleteWorktreeCmd(m.deps.Svc, wt.Worktree.Path)
 				}},
 			)
 			if wt.HasSession {
 				items = append(items, CommandItem{label: "Kill session", desc: "Kill tmux session only", run: func(m *model) tea.Cmd {
-					if m.svc == nil {
+					if m.deps.Svc == nil {
 						return nil
 					}
-					return killSessionCmd(m.svc, wt.SessionName)
+					return killSessionCmd(m.deps.Svc, wt.SessionName)
 				}})
 			}
 		case kindGlobal:
@@ -2010,8 +2027,8 @@ func (m *model) commandPaletteItems() []CommandItem {
 			sessionName := wt.Worktree.Name
 			items = append(items,
 				CommandItem{label: "Jump to worktree", desc: "Switch to selected worktree session", run: func(m *model) tea.Cmd {
-					if !m.tmux.HasSession(sessionName) {
-						_ = m.tmux.NewSession(sessionName, wt.Worktree.Path)
+					if !m.deps.Tmux.HasSession(sessionName) {
+						_ = m.deps.Tmux.NewSession(sessionName, wt.Worktree.Path)
 					}
 					m.jumpTarget = &JumpTarget{SessionName: sessionName, Path: wt.Worktree.Path}
 					return tea.Quit
@@ -2020,13 +2037,13 @@ func (m *model) commandPaletteItems() []CommandItem {
 		case kindOrphan:
 			sessionName := sel.title
 			items = append(items, CommandItem{label: "Kill orphan session", desc: "Kill this orphaned session", run: func(m *model) tea.Cmd {
-				if m.globalMode {
-					return killSessionDirectCmd(m.tmux, sessionName)
+				if m.nav.GlobalMode {
+					return killSessionDirectCmd(m.deps.Tmux, sessionName)
 				}
-				if m.svc == nil {
+				if m.deps.Svc == nil {
 					return nil
 				}
-				return killSessionCmd(m.svc, sessionName)
+				return killSessionCmd(m.deps.Svc, sessionName)
 			}})
 		}
 	}
@@ -2037,18 +2054,18 @@ func (m *model) commandPaletteItems() []CommandItem {
 // View
 
 func (m model) View() string {
-	if m.loading {
+	if m.nav.Loading {
 		loadingBox := lipgloss.NewStyle().
 			Padding(2, 4).
 			Render(m.spinner.View() + " Loading worktrees...")
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, loadingBox)
 	}
 
-	if m.state == stateHelp {
+	if m.nav.State == stateHelp {
 		return renderHelp()
 	}
 
-	switch m.state {
+	switch m.nav.State {
 	case stateSelectRepo:
 		return views.RenderRepoSelector(&m.menu)
 	case stateCreateName:
@@ -2097,10 +2114,10 @@ func (m model) View() string {
 		t4.Render("x")
 
 	repoIndicator := ""
-	if m.globalMode {
+	if m.nav.GlobalMode {
 		repoIndicator = theme.WarnStyle.Render("GLOBAL")
-	} else if m.svc != nil && m.svc.Git != nil {
-		repoName := filepath.Base(m.svc.Git.RepoRoot)
+	} else if m.deps.Svc != nil && m.deps.Svc.Git != nil {
+		repoName := filepath.Base(m.deps.Svc.Git.RepoRoot)
 		repoIndicator = theme.SectionStyle.Render(repoName)
 	}
 
@@ -2136,7 +2153,7 @@ func (m model) View() string {
 		Render(headerLine + "\n" + dividerLine)
 
 	toggleHint := theme.KeyStyle.Render("g") + theme.DimStyle.Render(" global  ")
-	if m.globalMode {
+	if m.nav.GlobalMode {
 		toggleHint = theme.KeyStyle.Render("g") + theme.DimStyle.Render(" repo  ")
 	}
 
@@ -2326,11 +2343,11 @@ func (m *model) getPreviewContent() string {
 		Width:           m.preview.Width,
 		PaneContent:     m.paneContent,
 		PaneSession:     m.paneSession,
-		GlobalMode:      m.globalMode,
-		Tmux:            m.tmux,
-		States:          m.states,
-		Orphans:         m.orphans,
-		GlobalWorktrees: m.globalWorktrees,
+		GlobalMode:      m.nav.GlobalMode,
+		Tmux:            m.deps.Tmux,
+		States:          m.data.States,
+		Orphans:         m.data.Orphans,
+		GlobalWorktrees: m.data.GlobalWorktrees,
 	}
 
 	item := components.PreviewItem{
