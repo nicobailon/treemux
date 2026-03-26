@@ -120,8 +120,12 @@ func (s *Service) WorktreesWithoutSession(states []WorktreeState) []WorktreeStat
 }
 
 func (s *Service) CreateWorktree(name, baseBranch string) (string, error) {
+	return s.CreateWorktreeFromBranch(name, name, baseBranch)
+}
+
+func (s *Service) CreateWorktreeFromBranch(name, branchName, baseBranch string) (string, error) {
 	path := s.WorktreePath(name)
-	if err := s.Git.WorktreeAdd(path, name, baseBranch); err != nil {
+	if err := s.Git.WorktreeAdd(path, branchName, baseBranch); err != nil {
 		return "", err
 	}
 	sessionName := s.SessionName(path)
